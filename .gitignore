@@ -37,6 +37,12 @@ app.*.symbols
 # Obfuscation related
 app.*.map.json
 
+# Secrets — real env files are never committed (template: backend/.env.example)
+.env
+
+# Node (backend proxy is dependency-free, but never commit installed modules)
+node_modules/
+
 # Android Studio will place build artifacts here
 /android/app/debug
 /android/app/profile

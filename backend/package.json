@@ -1,0 +1,13 @@
+{
+  "name": "skinseries-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SkinSeries YouCam proxy — holds the skin analysis API key server-side. Zero-dependency Node.js >= 18.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
