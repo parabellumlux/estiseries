@@ -1,38 +1,171 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
-  <base href="$FLUTTER_BASE_HREF">
-
-  <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
-
-  <!-- iOS meta tags & icons -->
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="skinseries">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
-
-  <title>skinseries</title>
-  <link rel="manifest" href="manifest.json">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skin check-in — Luna Glow Skin Studio</title>
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <script src="flutter_bootstrap.js" async></script>
+<header class="site-header">
+  <p class="practice-name" id="practiceName">Luna Glow Skin Studio</p>
+  <p class="practice-tagline" id="practiceTagline">Skin care, measured.</p>
+  <span class="demo-badge">Demo mode</span>
+</header>
+
+<main class="flow">
+  <p class="progress" id="progressLabel" aria-live="polite">Step 1 of 5 — Welcome</p>
+
+  <!-- Step 0: Welcome -->
+  <section class="step" id="step-welcome" aria-labelledby="welcomeHeading">
+    <h1 id="welcomeHeading">Skin check-in for Maya R.</h1>
+    <p class="lede">A 2-minute skin check-in before your visit — your results go to Ava and stay on your phone here too.</p>
+    <p>This skin check-in uses a photo to create a simple, plain-language skin analysis you can review with Ava at Luna Glow Skin Studio. Your scans stay together on one series timeline, so you can see how your skin changes across your visits.</p>
+    <p>No app to install and no account to create — just a few quick steps.</p>
+    <button type="button" class="btn btn-primary" id="startBtn">Start my check-in</button>
+  </section>
+
+  <!-- Step 1: Consent -->
+  <section class="step" id="step-consent" aria-labelledby="consentHeading" hidden>
+    <h2 id="consentHeading">Before we start — your photo, your choice</h2>
+    <p>Please read each line and check every box to continue. Your photo is used only for this cosmetic skin analysis.</p>
+    <form id="consentForm">
+      <div class="check-row">
+        <input type="checkbox" id="consent1" class="consent-check">
+        <label for="consent1">My photo will be used for a cosmetic skin analysis.</label>
+      </div>
+      <div class="check-row">
+        <input type="checkbox" id="consent2" class="consent-check">
+        <label for="consent2">My photo is processed by a third-party skin analysis service; their copy is deleted within 24 hours.</label>
+      </div>
+      <div class="check-row">
+        <input type="checkbox" id="consent3" class="consent-check">
+        <label for="consent3">My results will be shared with Luna Glow Skin Studio.</label>
+      </div>
+      <div class="check-row">
+        <input type="checkbox" id="consent4" class="consent-check">
+        <label for="consent4">I understand this is a cosmetic skin analysis — not a medical diagnosis.</label>
+      </div>
+      <div class="check-row">
+        <input type="checkbox" id="consent5" class="consent-check">
+        <label for="consent5">I can ask Luna Glow Skin Studio to delete my data at any time.</label>
+      </div>
+    </form>
+    <p class="hint" id="consentHint">All five boxes are needed so we can run your skin analysis.</p>
+    <div class="btn-row">
+      <button type="button" class="btn btn-ghost" id="consentBackBtn">Back</button>
+      <button type="button" class="btn btn-primary" id="consentContinueBtn" disabled>Continue</button>
+    </div>
+  </section>
+
+  <!-- Step 2: Guided capture -->
+  <section class="step" id="step-capture" aria-labelledby="captureHeading" hidden>
+    <h2 id="captureHeading">Take your photo</h2>
+    <p>One clear, front-facing photo is all we need for your skin analysis.</p>
+
+    <div class="camera-panel">
+      <video id="cameraVideo" autoplay playsinline muted hidden></video>
+      <div class="face-placeholder" id="facePlaceholder" role="img" aria-label="Demo photo placeholder showing where your face goes in the frame">
+        <div class="face-oval">
+          <span class="face-eye face-eye-left"></span>
+          <span class="face-eye face-eye-right"></span>
+          <span class="face-smile"></span>
+        </div>
+        <p class="face-placeholder-text" id="facePlaceholderText">Demo photo</p>
+      </div>
+      <p class="camera-note" id="cameraNote" aria-live="polite"></p>
+    </div>
+
+    <h3 class="tips-heading">For the clearest photo</h3>
+    <ul class="tips-list">
+      <li>Bright, even light</li>
+      <li>Face fills the frame</li>
+      <li>Glasses off</li>
+      <li>Hair off forehead</li>
+    </ul>
+
+    <div class="coaching-card" id="coachingCard" role="alert" hidden>
+      <p class="coaching-title">One quick fix</p>
+      <p class="coaching-text" id="coachingText"></p>
+    </div>
+
+    <p class="status-line" id="analyzeStatus" aria-live="polite"></p>
+
+    <div class="btn-row btn-row-wrap">
+      <button type="button" class="btn btn-ghost" id="cameraBtn">Use my camera</button>
+      <button type="button" class="btn btn-ghost" id="demoPhotoBtn">Use a demo photo instead</button>
+    </div>
+    <button type="button" class="btn btn-primary btn-block" id="analyzeBtn">Analyze my photo</button>
+    <button type="button" class="btn btn-link" id="captureBackBtn">Back</button>
+  </section>
+
+  <!-- Step 3: Report -->
+  <section class="step" id="step-report" aria-labelledby="reportHeading" hidden>
+    <h2 id="reportHeading">Your report</h2>
+    <p class="step-sub">From your latest scan — <span id="reportScanMeta"></span></p>
+
+    <div class="score-hero">
+      <p class="score-hero-label">Overall score</p>
+      <p class="score-hero-value"><span id="reportOverall">–</span><span class="score-hero-max"> / 100</span></p>
+      <p class="score-hero-meta">Skin age <strong id="reportSkinAge">–</strong> · Skin type <strong id="reportSkinType">–</strong></p>
+    </div>
+
+    <h3>Top focus areas</h3>
+    <p class="hint">The areas with the lowest scores in this scan — a good place to focus daily care and your chat with Ava.</p>
+    <div id="focusAreas"></div>
+
+    <h3>All concerns</h3>
+    <div class="concern-list" id="allConcerns"></div>
+
+    <p class="disclaimer">Cosmetic skin analysis for consultation and progress tracking. This is not a medical diagnosis.</p>
+    <button type="button" class="btn btn-primary btn-block" id="toTimelineBtn">See your series timeline</button>
+  </section>
+
+  <!-- Step 4: Series timeline -->
+  <section class="step" id="step-timeline" aria-labelledby="timelineHeading" hidden>
+    <h2 id="timelineHeading">Your series timeline</h2>
+    <p class="step-sub">Every scan in your series, side by side — including the areas that stayed about the same.</p>
+
+    <ol class="timeline" id="timelineList"></ol>
+
+    <h3>Change since baseline</h3>
+    <p class="hint">Session 6 compared with your baseline scan. A minus means that score is a little lower than at the start — we show it as it is.</p>
+    <table class="delta-table">
+      <thead>
+        <tr><th scope="col">Concern</th><th scope="col">Baseline</th><th scope="col">Session 6</th><th scope="col">Change</th></tr>
+      </thead>
+      <tbody id="deltaTableBody"></tbody>
+    </table>
+
+    <div class="plan-card">
+      <h3>Your plan from Ava</h3>
+      <p class="plan-series" id="planSeries"></p>
+      <h4>Focus notes</h4>
+      <div id="planFocus"></div>
+      <h4>Your daily routine</h4>
+      <p><strong>Morning:</strong> <span id="planAm"></span></p>
+      <p><strong>Evening:</strong> <span id="planPm"></span></p>
+      <h4>Your products</h4>
+      <ul class="product-list" id="planProducts"></ul>
+      <p class="product-total" id="planProductsTotal"></p>
+    </div>
+
+    <div class="next-card">
+      <h3>What next?</h3>
+      <p>Series complete — Ava recommends a maintenance facial next.</p>
+      <a class="btn btn-primary btn-block" id="bookingLink" href="#" target="_blank" rel="noopener">Book your next visit</a>
+    </div>
+
+    <p class="disclaimer">Cosmetic skin analysis for consultation and progress tracking. This is not a medical diagnosis.</p>
+    <button type="button" class="btn btn-link" id="timelineBackBtn">Back to your report</button>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <p>SkinSeries · Skin check-in for clients of Luna Glow Skin Studio</p>
+</footer>
+
+<script src="demo-data.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
