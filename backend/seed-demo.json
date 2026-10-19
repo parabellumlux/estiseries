@@ -1,0 +1,130 @@
+{
+  "practice": {
+    "practiceName": "Luna Glow Skin Studio",
+    "practitionerName": "Ava Luna",
+    "accent": "#B0714F",
+    "bookingLink": "https://example.com/book/lunaglow"
+  },
+  "client": {
+    "firstName": "Maya R.",
+    "plan": {
+      "seriesName": "Calm + Hydrate Renewal Series",
+      "sessions": 6,
+      "focus": [
+        {
+          "concern": "moisture",
+          "note": "Hydration Boost Serum morning and night; lukewarm water only when cleansing."
+        },
+        {
+          "concern": "redness",
+          "note": "Gentle hands, no scrubs between sessions; note any flare-ups in the week before each visit."
+        },
+        {
+          "concern": "radiance",
+          "note": "One gentle enzyme polish at home per week, starting after session 2."
+        }
+      ],
+      "regimen": {
+        "am": "Gentle Renewal Cleanser \u2192 Hydration Boost Serum \u2192 Calm Moisture Cream \u2192 Mineral SPF 50",
+        "pm": "Gentle Renewal Cleanser \u2192 Hydration Boost Serum \u2192 Calm Moisture Cream"
+      },
+      "products": [
+        {
+          "name": "Hydration Boost Serum",
+          "price": 64
+        },
+        {
+          "name": "Calm Moisture Cream",
+          "price": 52
+        },
+        {
+          "name": "Mineral SPF 50",
+          "price": 34
+        }
+      ]
+    },
+    "scans": [
+      {
+        "taskId": "seed-baseline",
+        "label": "Baseline",
+        "timestamp": "2026-07-13",
+        "result": {
+          "overall": 61,
+          "skinAge": 47,
+          "skinType": "Combination",
+          "scores": {
+            "acne": 55,
+            "ageSpot": 71,
+            "darkCircle": 54,
+            "droopyLowerEyelid": 80,
+            "droopyUpperEyelid": 78,
+            "eyeBag": 59,
+            "firmness": 64,
+            "moisture": 42,
+            "oiliness": 66,
+            "pore": 60,
+            "radiance": 52,
+            "redness": 58,
+            "tearTrough": 69,
+            "texture": 57,
+            "wrinkle": 63
+          }
+        }
+      },
+      {
+        "taskId": "seed-session3",
+        "label": "Session 3",
+        "timestamp": "2026-08-24",
+        "result": {
+          "overall": 68,
+          "skinAge": 45,
+          "skinType": "Combination",
+          "scores": {
+            "acne": 63,
+            "ageSpot": 70,
+            "darkCircle": 57,
+            "droopyLowerEyelid": 79,
+            "droopyUpperEyelid": 78,
+            "eyeBag": 58,
+            "firmness": 66,
+            "moisture": 54,
+            "oiliness": 68,
+            "pore": 62,
+            "radiance": 61,
+            "redness": 66,
+            "tearTrough": 68,
+            "texture": 63,
+            "wrinkle": 63
+          }
+        }
+      },
+      {
+        "taskId": "seed-session6",
+        "label": "Session 6",
+        "timestamp": "2026-10-05",
+        "result": {
+          "overall": 74,
+          "skinAge": 44,
+          "skinType": "Combination",
+          "scores": {
+            "acne": 71,
+            "ageSpot": 69,
+            "darkCircle": 62,
+            "droopyLowerEyelid": 79,
+            "droopyUpperEyelid": 77,
+            "eyeBag": 60,
+            "firmness": 69,
+            "moisture": 63,
+            "oiliness": 70,
+            "pore": 66,
+            "radiance": 70,
+            "redness": 74,
+            "tearTrough": 67,
+            "texture": 69,
+            "wrinkle": 65
+          }
+        }
+      }
+    ]
+  }
+}

@@ -50,3 +50,6 @@ node_modules/
 
 # Captured live YouCam payload sample (evidence from the 2026-10-19 mapper fix)
 backend/raw-sample.json
+
+# Live data store — contains practitioner/client access tokens, never commit
+backend/data.json

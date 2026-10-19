@@ -1,24 +1,30 @@
 'use strict';
 
-// SkinSeries backend proxy — the only component that holds the YouCam API key.
+// EstiSeries backend — the only component that holds the YouCam API key.
 // Zero-dependency Node.js (>= 18): built-in `http` plus the global `fetch`.
 //
-// Modes:
-//   demo (default) — no YOUCAM_API_KEY in the environment. Serves seeded results
-//     from ../assets/demo/demo_data.json (read once at startup). Never touches
-//     the network.
-//   live — YOUCAM_API_KEY is set. Implements the real YouCam (Perfect Corp YCE)
-//     async flow against https://yce-api-01.makeupar.com:
-//       1. POST /s2s/v2.0/file/skin-analysis   -> pre-signed upload URL + file id
-//       2. PUT the image bytes to that URL
-//       3. POST /s2s/v2.0/task/skin-analysis   -> task_id (SD action list)
-//       4. GET  /s2s/v2.0/task/skin-analysis/<task_id> until complete
-//       5. Map the response into the shared ScanResult shape from SPEC.md
+// Production shape (API contract v2, docs/api-contract-v2.md):
+//   Practitioners (estheticians) own clients. Every API read/write is scoped
+//   by a token: practitioner endpoints need `Authorization: Bearer <token>`;
+//   client endpoints are keyed by the client token in the path (the token is
+//   the credential inside the client's personal link, /?c=<token>).
+//   State lives in a JSON file store (data.json, atomic writes) — small,
+//   single-server, zero dependencies.
+//   Scans run the real YouCam (Perfect Corp YCE) async flow against
+//   https://yce-api-01.makeupar.com:
+//     1. POST /s2s/v2.0/file/skin-analysis   -> pre-signed upload URL + file id
+//     2. PUT the image bytes to that URL
+//     3. POST /s2s/v2.0/task/skin-analysis   -> task_id (SD action list)
+//     4. GET  /s2s/v2.0/task/skin-analysis/<task_id> until complete
+//     5. Map the response into the shared ScanResult shape and append it to
+//        the scanning client's series record.
+//   The live flow + result mapper were verified end-to-end against the real
+//   API on 2026-10-19 (payload anatomy documented at mapProviderResult; a
+//   captured sample is raw-sample.json, gitignored).
 //
-// The live path is written to the published YouCam docs and was verified
-// end-to-end against the real API on 2026-10-19 (the real payload shape is
-// documented at mapProviderResult; a captured sample is raw-sample.json). Nothing here is
-// faked — when a key is present the requests really go to YouCam.
+// Seeded data survives in exactly one place: the judge demo accounts
+// (demo practitioner + her demo client, seeded from seed-demo.json at store
+// init). Nothing else serves seeded results; there is no demo mode.
 
 const http = require('node:http');
 const fs = require('node:fs');
@@ -30,16 +36,23 @@ const crypto = require('node:crypto');
 // ---------------------------------------------------------------------------
 
 const YOUCAM_BASE = 'https://yce-api-01.makeupar.com';
-const DEMO_DATA_PATH = path.join(__dirname, '..', 'assets', 'demo', 'demo_data.json');
-const DEMO_STAGES = ['baseline', 'session3', 'session6'];
+const DATA_PATH = process.env.DATA_PATH || path.join(__dirname, 'data.json');
+const SEED_PATH = path.join(__dirname, 'seed-demo.json');
 // Error codes the client coaching loop develops against; mirrors the YouCam
-// error surface so the same client code works in demo and live modes.
+// error surface so the same client code works for real and rehearsed errors.
 const SIMULATED_ERROR_CODES = ['error_lighting_dark', 'error_src_face_too_small'];
 const MAX_BODY_BYTES = 25 * 1024 * 1024; // base64 photos are large
 const REQUEST_TIMEOUT_MS = 30000;
 const UPLOAD_TIMEOUT_MS = 60000;
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 150; // ~5 minutes upstream, then report an error
+
+// Demo judge accounts (docs/api-contract-v2.md). The demo client's token is
+// fixed and shareable on purpose — it only ever exposes fictional data.
+const DEMO_LOGIN = 'demo@estiseries.app';
+const DEMO_PASSWORD = 'GlowDemo2026';
+const DEMO_CLIENT_TOKEN = 'demo-maya-r';
+const SAMPLE_PRACTICE_NAME = 'EstiSeries Sample Studio';
 
 // SD (standard-definition) concern list sent with the task request. Simultaneous
 // SD + HD concern parameters are not supported by the API, so this stays SD.
@@ -82,31 +95,6 @@ const ITEM_TYPE_TO_CONCERN = {
   tear_trough: 'tearTrough',
 };
 
-// Minimal embedded ScanResult used only if the seeded demo file cannot be read,
-// so demo mode still works end-to-end (values are the SPEC.md example shape).
-const FALLBACK_SCAN_RESULT = Object.freeze({
-  overall: 61,
-  skinAge: 47,
-  skinType: 'Combination',
-  scores: {
-    wrinkle: 63,
-    pore: 60,
-    texture: 57,
-    acne: 55,
-    oiliness: 66,
-    radiance: 52,
-    eyeBag: 59,
-    ageSpot: 71,
-    darkCircle: 54,
-    droopyUpperEyelid: 78,
-    droopyLowerEyelid: 80,
-    firmness: 64,
-    moisture: 42,
-    redness: 58,
-    tearTrough: 69,
-  },
-});
-
 // ---------------------------------------------------------------------------
 // Environment (.env support without dependencies)
 // ---------------------------------------------------------------------------
@@ -133,7 +121,7 @@ function loadDotEnv() {
       if (key && !(key in process.env)) process.env[key] = value;
     }
   } catch (_) {
-    // No .env file is perfectly fine — demo mode needs nothing.
+    // No .env file is fine for store-only endpoints — scans need the key.
   }
 }
 
@@ -143,58 +131,167 @@ const API_KEY =
   process.env.YOUCAM_API_KEY && process.env.YOUCAM_API_KEY.trim()
     ? process.env.YOUCAM_API_KEY.trim()
     : null;
-const MODE = API_KEY ? 'live' : 'demo';
+const MODE = API_KEY ? 'live' : 'unconfigured';
 const PORT = Number.parseInt(process.env.PORT || '', 10) || 8787;
 
 // ---------------------------------------------------------------------------
-// Demo data (read once at startup)
+// Store (JSON file, atomic writes)
 // ---------------------------------------------------------------------------
 
-function toScanResult(scan) {
+function newToken() {
+  return crypto.randomBytes(24).toString('base64url');
+}
+
+function hashPassword(salt, password) {
+  return crypto.createHash('sha256').update(salt + ':' + password).digest('hex');
+}
+
+function loadStore() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
+    if (parsed && Array.isArray(parsed.practitioners)) return parsed;
+  } catch (_) {
+    // Missing/corrupt store — start fresh; seed data is re-created below.
+  }
+  return { practitioners: [] };
+}
+
+const store = loadStore();
+
+function saveStore() {
+  const tmp = DATA_PATH + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(store, null, 2));
+  fs.renameSync(tmp, DATA_PATH);
+}
+
+function findPractitionerByToken(token) {
+  if (!token) return null;
+  return store.practitioners.find((p) => p.token === token) || null;
+}
+
+function findClientByToken(token) {
+  if (!token) return null;
+  for (const practitioner of store.practitioners) {
+    const client = practitioner.clients.find((c) => c.token === token);
+    if (client) return { practitioner, client };
+  }
+  return null;
+}
+
+function publicPractitioner(p) {
   return {
-    overall: scan.overall,
-    skinAge: scan.skinAge,
-    skinType: scan.skinType,
-    scores: Object.assign({}, scan.scores),
+    id: p.id,
+    practiceName: p.practiceName,
+    practitionerName: p.practitionerName,
+    accent: p.accent,
+    bookingLink: p.bookingLink,
+    createdAt: p.createdAt,
+    clientCount: p.clients.length,
   };
 }
 
-function loadDemoScans() {
-  try {
-    const data = JSON.parse(fs.readFileSync(DEMO_DATA_PATH, 'utf8'));
-    const scans = (data.clients && data.clients[0] && data.clients[0].scans) || [];
-    const byStage = {};
-    for (const scan of scans) {
-      if (scan && typeof scan.stage === 'string') byStage[scan.stage] = toScanResult(scan);
-    }
-    if (!DEMO_STAGES.some((stage) => byStage[stage])) {
-      throw new Error('no seeded scans found in demo data');
-    }
-    for (const stage of DEMO_STAGES) {
-      if (!byStage[stage]) byStage[stage] = toScanResult(FALLBACK_SCAN_RESULT);
-    }
-    return byStage;
-  } catch (err) {
-    console.warn(
-      '[skinseries] could not read assets/demo/demo_data.json (' +
-        (err && err.message ? err.message : 'unknown error') +
-        ') — using the embedded fallback result.'
-    );
-    return {
-      baseline: toScanResult(FALLBACK_SCAN_RESULT),
-      session3: toScanResult(FALLBACK_SCAN_RESULT),
-      session6: toScanResult(FALLBACK_SCAN_RESULT),
-    };
-  }
+function clientSummary(c) {
+  const latest = c.scans.length ? c.scans[c.scans.length - 1] : null;
+  return {
+    id: c.id,
+    firstName: c.firstName,
+    createdAt: c.createdAt,
+    token: c.token,
+    link: '/?c=' + c.token,
+    scanCount: c.scans.length,
+    latestOverall: latest ? latest.result.overall : null,
+    latestScanAt: latest ? latest.timestamp : null,
+    plan: c.plan || null,
+  };
 }
 
-const demoScans = loadDemoScans();
+function clientFull(c) {
+  return Object.assign(clientSummary(c), {
+    scans: c.scans.map((s) => ({
+      taskId: s.taskId,
+      label: s.label,
+      timestamp: s.timestamp,
+      result: s.result,
+    })),
+  });
+}
 
 // ---------------------------------------------------------------------------
-// Live task store (in-memory only; a restart clears running task ids)
+// Seeding — built-in sample practitioner (backs the public try-it path) and
+// the judge demo accounts. Runs at store init when absent; idempotent.
 // ---------------------------------------------------------------------------
 
-const liveTasks = new Map(); // taskId -> { status, result?, errorCode?, createdAt }
+function seedStore() {
+  let changed = false;
+
+  if (!store.practitioners.some((p) => p.sample)) {
+    store.practitioners.push({
+      id: 'sample',
+      token: newToken(),
+      practiceName: SAMPLE_PRACTICE_NAME,
+      practitionerName: 'EstiSeries',
+      accent: '#7D8C74',
+      bookingLink: '',
+      createdAt: new Date().toISOString(),
+      sample: true,
+      demo: false,
+      login: null,
+      clients: [],
+    });
+    changed = true;
+  }
+
+  if (!store.practitioners.some((p) => p.demo)) {
+    try {
+      const seed = JSON.parse(fs.readFileSync(SEED_PATH, 'utf8'));
+      const salt = crypto.randomBytes(8).toString('hex');
+      const demoClient = {
+        id: crypto.randomUUID(),
+        token: DEMO_CLIENT_TOKEN,
+        firstName: seed.client.firstName,
+        createdAt: new Date().toISOString(),
+        oneOff: false,
+        plan: seed.client.plan,
+        scans: seed.client.scans,
+      };
+      store.practitioners.push({
+        id: crypto.randomUUID(),
+        token: newToken(),
+        practiceName: seed.practice.practiceName,
+        practitionerName: seed.practice.practitionerName,
+        accent: seed.practice.accent,
+        bookingLink: seed.practice.bookingLink,
+        createdAt: new Date().toISOString(),
+        sample: false,
+        demo: true,
+        login: {
+          login: DEMO_LOGIN,
+          salt,
+          hash: hashPassword(salt, DEMO_PASSWORD),
+        },
+        clients: [demoClient],
+      });
+      changed = true;
+    } catch (err) {
+      console.warn(
+        '[estiseries] could not seed demo accounts (' +
+          (err && err.message ? err.message : 'unknown error') +
+          ') — continuing without them.'
+      );
+    }
+  }
+
+  if (changed) saveStore();
+}
+
+seedStore();
+
+// ---------------------------------------------------------------------------
+// Live task store (in-memory only; a restart clears running task ids —
+// completed results are already persisted into the client's series record)
+// ---------------------------------------------------------------------------
+
+const liveTasks = new Map(); // taskId -> { status, result?, errorCode?, clientToken, createdAt, appended }
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -216,8 +313,8 @@ function sendJson(res, statusCode, payload) {
 
 function setCors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 }
 
 function readJsonBody(req) {
@@ -278,6 +375,15 @@ function stringOr(...values) {
   return null;
 }
 
+function requireString(body, field) {
+  const value = body && typeof body[field] === 'string' ? body[field].trim() : '';
+  return value || null;
+}
+
+// ---------------------------------------------------------------------------
+// Live YouCam flow (verified end-to-end 2026-10-19 — see file header)
+// ---------------------------------------------------------------------------
+
 function youcamHeaders() {
   return { Authorization: 'Bearer ' + API_KEY, 'Content-Type': 'application/json' };
 }
@@ -312,10 +418,6 @@ function providerErrorCode(data) {
     null;
   return code ? String(code) : 'error_analysis_failed';
 }
-
-// ---------------------------------------------------------------------------
-// Live YouCam flow (verified end-to-end 2026-10-19 — see file header)
-// ---------------------------------------------------------------------------
 
 // Maps a completed YouCam task payload into the shared ScanResult shape
 // (SPEC.md). YouCam returns health scores per concern (`ui_score`, higher =
@@ -354,7 +456,7 @@ function mapProviderResult(data) {
 
     if (key === 'all' || key === 'overall') {
       // The `all` item carries a float score (e.g. 74.73); ScanResult's
-      // overall is an integer everywhere else (demo data, fallback average).
+      // overall is an integer everywhere else.
       overall = score === null ? null : Math.round(score);
       continue;
     }
@@ -393,9 +495,32 @@ function mapProviderResult(data) {
   return { overall, skinAge, skinType, scores };
 }
 
+// Persists a completed result into the owning client's series — exactly once
+// per task. Called by the pipeline on completion.
+function appendScanToClient(taskId, result) {
+  const task = liveTasks.get(taskId);
+  if (!task || task.appended || !task.clientToken) return;
+  const found = findClientByToken(task.clientToken);
+  if (!found) return;
+  const { client } = found;
+  const label = client.scans.length === 0 ? 'Baseline' : 'Scan ' + (client.scans.length + 1);
+  client.scans.push({
+    taskId,
+    label,
+    timestamp: new Date().toISOString(),
+    result,
+  });
+  task.appended = true;
+  saveStore();
+}
+
 async function runLivePipeline(taskId, buffer, contentType) {
   const markError = (errorCode) => {
-    liveTasks.set(taskId, { status: 'error', errorCode, createdAt: Date.now() });
+    const existing = liveTasks.get(taskId) || {};
+    liveTasks.set(
+      taskId,
+      Object.assign({}, existing, { status: 'error', errorCode, createdAt: Date.now() })
+    );
   };
 
   // Step 1 — register the file: get a pre-signed upload URL + file id.
@@ -409,7 +534,7 @@ async function runLivePipeline(taskId, buffer, contentType) {
         files: [
           {
             content_type: contentType,
-            file_name: 'skinseries-' + Date.now() + '.' + extension,
+            file_name: 'estiseries-' + Date.now() + '.' + extension,
             file_size: buffer.length,
           },
         ],
@@ -490,13 +615,19 @@ async function runLivePipeline(taskId, buffer, contentType) {
     const lowered = taskStatus.toLowerCase();
 
     if (lowered === 'success' || lowered === 'complete' || lowered === 'completed') {
-      // Step 5 — map into the shared ScanResult shape.
+      // Step 5 — map into the shared ScanResult shape and persist it into
+      // the scanning client's series record.
       const result = mapProviderResult(data);
       if (!result) {
         markError('error_analysis_failed');
         return;
       }
-      liveTasks.set(taskId, { status: 'complete', result, createdAt: Date.now() });
+      const existing = liveTasks.get(taskId) || {};
+      liveTasks.set(
+        taskId,
+        Object.assign({}, existing, { status: 'complete', result, createdAt: Date.now() })
+      );
+      appendScanToClient(taskId, result);
       return;
     }
     if (lowered === 'failed' || lowered === 'error' || lowered === 'cancelled') {
@@ -508,21 +639,22 @@ async function runLivePipeline(taskId, buffer, contentType) {
   markError('error_analysis_timeout');
 }
 
-function startLiveScan(buffer, contentType) {
+function startLiveScan(clientToken, buffer, contentType) {
   const taskId = crypto.randomUUID();
-  liveTasks.set(taskId, { status: 'running', createdAt: Date.now() });
+  liveTasks.set(taskId, {
+    status: 'running',
+    clientToken,
+    createdAt: Date.now(),
+    appended: false,
+  });
   runLivePipeline(taskId, buffer, contentType).catch((err) => {
-    console.error(
-      '[skinseries] live pipeline failed:',
-      err && err.message ? err.message : err
-    );
+    console.error('[estiseries] live pipeline failed:', err && err.message ? err.message : err);
     const existing = liveTasks.get(taskId);
     if (existing && existing.status === 'running') {
-      liveTasks.set(taskId, {
-        status: 'error',
-        errorCode: 'error_analysis_failed',
-        createdAt: existing.createdAt,
-      });
+      liveTasks.set(
+        taskId,
+        Object.assign({}, existing, { status: 'error', errorCode: 'error_analysis_failed' })
+      );
     }
   });
   return taskId;
@@ -532,10 +664,9 @@ function startLiveScan(buffer, contentType) {
 // Request handlers
 // ---------------------------------------------------------------------------
 
-async function handlePostScan(req, res) {
-  let body;
+async function parseBody(req, res) {
   try {
-    body = await readJsonBody(req);
+    return await readJsonBody(req);
   } catch (err) {
     if (err && err.statusCode === 413) {
       sendJson(res, 413, { status: 'error', errorCode: 'error_payload_too_large' });
@@ -546,93 +677,202 @@ async function handlePostScan(req, res) {
         message: 'Send a JSON body.',
       });
     }
+    return null;
+  }
+}
+
+function badRequest(res, message) {
+  sendJson(res, 400, { status: 'error', errorCode: 'error_bad_request', message });
+}
+
+function notFound(res, errorCode, message) {
+  sendJson(res, 404, { status: 'error', errorCode, message });
+}
+
+function unauthorized(res) {
+  sendJson(res, 401, {
+    status: 'error',
+    errorCode: 'error_unauthorized',
+    message: 'A valid practitioner token is required.',
+  });
+}
+
+function authPractitioner(req) {
+  const header = req.headers.authorization || '';
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match ? findPractitionerByToken(match[1].trim()) : null;
+}
+
+function editableProfile(body, target) {
+  for (const field of ['practiceName', 'practitionerName', 'accent', 'bookingLink']) {
+    if (typeof body[field] === 'string') target[field] = body[field].trim();
+  }
+}
+
+function handleCreatePractitioner(body, res) {
+  const practiceName = requireString(body, 'practiceName');
+  const practitionerName = requireString(body, 'practitionerName');
+  if (!practiceName || !practitionerName) {
+    badRequest(res, 'practiceName and practitionerName are required.');
     return;
   }
+  const practitioner = {
+    id: crypto.randomUUID(),
+    token: newToken(),
+    practiceName,
+    practitionerName,
+    accent: typeof body.accent === 'string' && body.accent.trim() ? body.accent.trim() : '#B0714F',
+    bookingLink:
+      typeof body.bookingLink === 'string' ? body.bookingLink.trim() : '',
+    createdAt: new Date().toISOString(),
+    sample: false,
+    demo: false,
+    login: null,
+    clients: [],
+  };
+  store.practitioners.push(practitioner);
+  saveStore();
+  sendJson(
+    res,
+    201,
+    Object.assign({ token: practitioner.token }, publicPractitioner(practitioner))
+  );
+}
 
-  // Simulated errors work in every mode: they mirror the YouCam error surface
-  // so the client coaching loop can be developed before a key exists.
-  if (body && typeof body.simulateError === 'string') {
+function handleLogin(body, res) {
+  const login = requireString(body, 'login');
+  const password = typeof body.password === 'string' ? body.password : '';
+  const practitioner = login
+    ? store.practitioners.find((p) => p.login && p.login.login === login)
+    : null;
+  if (
+    !practitioner ||
+    hashPassword(practitioner.login.salt, password) !== practitioner.login.hash
+  ) {
+    unauthorized(res);
+    return;
+  }
+  sendJson(res, 200, {
+    token: practitioner.token,
+    practitioner: publicPractitioner(practitioner),
+  });
+}
+
+function handleCreateClient(practitioner, body, res) {
+  const firstName = requireString(body, 'firstName');
+  if (!firstName) {
+    badRequest(res, 'firstName is required.');
+    return;
+  }
+  if (body.plan !== undefined && (typeof body.plan !== 'object' || body.plan === null)) {
+    badRequest(res, 'plan must be a JSON object when provided.');
+    return;
+  }
+  const client = {
+    id: crypto.randomUUID(),
+    token: newToken(),
+    firstName,
+    createdAt: new Date().toISOString(),
+    oneOff: false,
+    plan: body.plan || null,
+    scans: [],
+  };
+  practitioner.clients.push(client);
+  saveStore();
+  sendJson(res, 201, clientFull(client));
+}
+
+function ownClientOr404(practitioner, clientId, res) {
+  const client = practitioner.clients.find((c) => c.id === clientId);
+  if (!client) {
+    notFound(res, 'error_client_not_found', 'No such client for this practitioner.');
+    return null;
+  }
+  return client;
+}
+
+// --- Client-facing (token-keyed) handlers ---------------------------------
+
+function handleGetPublicClient(token, res) {
+  const found = findClientByToken(token);
+  if (!found) {
+    notFound(
+      res,
+      'error_client_not_found',
+      'This link is not active. Ask your practitioner for your personal link.'
+    );
+    return;
+  }
+  const { practitioner, client } = found;
+  sendJson(res, 200, {
+    practitioner: {
+      practiceName: practitioner.practiceName,
+      practitionerName: practitioner.practitionerName,
+      accent: practitioner.accent,
+      bookingLink: practitioner.bookingLink,
+    },
+    client: { firstName: client.firstName },
+    plan: client.plan || null,
+    scans: client.scans.map((s) => ({
+      label: s.label,
+      timestamp: s.timestamp,
+      result: s.result,
+    })),
+  });
+}
+
+async function handlePostClientScan(token, req, res) {
+  const found = findClientByToken(token);
+  if (!found) {
+    notFound(res, 'error_client_not_found', 'This link is not active.');
+    return;
+  }
+  const body = await parseBody(req, res);
+  if (body === null) return;
+
+  // Simulated errors mirror the YouCam error surface so the client coaching
+  // loop can rehearse before a real photo is sent. No provider call, no
+  // units, nothing stored.
+  if (typeof body.simulateError === 'string') {
     if (!SIMULATED_ERROR_CODES.includes(body.simulateError)) {
-      sendJson(res, 400, {
-        status: 'error',
-        errorCode: 'error_bad_request',
-        message:
-          'simulateError must be "error_lighting_dark" or "error_src_face_too_small".',
-      });
+      badRequest(
+        res,
+        'simulateError must be "error_lighting_dark" or "error_src_face_too_small".'
+      );
       return;
     }
     sendJson(res, 422, { status: 'error', errorCode: body.simulateError });
     return;
   }
 
-  // Seeded stages — the demo mode contract.
-  if (body && typeof body.demoStage === 'string') {
-    if (!DEMO_STAGES.includes(body.demoStage)) {
-      sendJson(res, 400, {
-        status: 'error',
-        errorCode: 'error_bad_request',
-        message: 'demoStage must be "baseline", "session3", or "session6".',
-      });
-      return;
-    }
-    if (MODE !== 'demo') {
-      sendJson(res, 400, {
-        status: 'error',
-        errorCode: 'error_bad_request',
-        message:
-          'demoStage is served in demo mode only. This server has a YOUCAM_API_KEY set, so it runs in live mode — send { "imageBase64": "..." } instead.',
-      });
-      return;
-    }
-    sendJson(res, 200, { status: 'complete', result: demoScans[body.demoStage] });
-    return;
-  }
-
-  // Photo upload — the real YouCam flow, live mode only.
-  if (body && typeof body.imageBase64 === 'string' && body.imageBase64.trim()) {
+  if (typeof body.imageBase64 === 'string' && body.imageBase64.trim()) {
     if (MODE !== 'live') {
-      sendJson(res, 400, {
+      sendJson(res, 503, {
         status: 'error',
-        errorCode: 'error_bad_request',
-        message:
-          'Photo uploads run in live mode only; this server has no YOUCAM_API_KEY set, so it is serving seeded demo results. Send { "demoStage": "baseline" } (or "session3" / "session6") instead.',
+        errorCode: 'error_not_configured',
+        message: 'This server has no YouCam API key configured, so scans are unavailable.',
       });
       return;
     }
     const buffer = decodeBase64Image(body.imageBase64);
     if (!buffer) {
-      sendJson(res, 400, {
-        status: 'error',
-        errorCode: 'error_bad_request',
-        message: 'imageBase64 must be valid base64-encoded JPEG or PNG data.',
-      });
+      badRequest(res, 'imageBase64 must be valid base64-encoded JPEG or PNG data.');
       return;
     }
     const contentType = body.contentType === 'image/png' ? 'image/png' : 'image/jpeg';
-    const taskId = startLiveScan(buffer, contentType);
+    const taskId = startLiveScan(token, buffer, contentType);
     sendJson(res, 200, { taskId, status: 'running' });
     return;
   }
 
-  sendJson(res, 400, {
-    status: 'error',
-    errorCode: 'error_bad_request',
-    message:
-      'Send { "demoStage": ... } for seeded results, { "simulateError": ... } to rehearse coaching, or { "imageBase64": ... } in live mode.',
-  });
+  badRequest(res, 'Send { "imageBase64": "..." } or { "simulateError": "..." }.');
 }
 
-function handleGetScan(taskId, res) {
+function handleGetClientScan(token, taskId, res) {
   const record = liveTasks.get(taskId);
-  if (!record) {
-    sendJson(res, 404, {
-      status: 'error',
-      errorCode: 'error_task_not_found',
-      message:
-        MODE === 'demo'
-          ? 'Task ids exist only in live mode. In demo mode, POST /api/scans with { "demoStage": "baseline" } (or "session3" / "session6") to get a result.'
-          : 'Unknown taskId. Task ids are held in memory and clear if the server restarts.',
-    });
+  // A task id is only visible to the client it belongs to.
+  if (!record || record.clientToken !== token) {
+    notFound(res, 'error_task_not_found', 'Unknown taskId for this client.');
     return;
   }
   if (record.status === 'complete') {
@@ -643,6 +883,31 @@ function handleGetScan(taskId, res) {
     sendJson(res, 200, { status: 'running' });
   }
 }
+
+function handleTry(body, res) {
+  const sample = store.practitioners.find((p) => p.sample);
+  if (!sample) {
+    sendJson(res, 500, { status: 'error', errorCode: 'error_internal' });
+    return;
+  }
+  const firstName = requireString(body || {}, 'firstName') || 'Guest';
+  const client = {
+    id: crypto.randomUUID(),
+    token: newToken(),
+    firstName,
+    createdAt: new Date().toISOString(),
+    oneOff: true,
+    plan: null,
+    scans: [],
+  };
+  sample.clients.push(client);
+  saveStore();
+  sendJson(res, 201, { token: client.token, link: '/?c=' + client.token });
+}
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
 
 const server = http.createServer(async (req, res) => {
   setCors(res);
@@ -660,51 +925,137 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'GET' && pathname === '/health') {
-    sendJson(res, 200, { ok: true, mode: MODE });
-    return;
-  }
+  try {
+    if (req.method === 'GET' && pathname === '/health') {
+      sendJson(res, 200, { ok: true, mode: MODE });
+      return;
+    }
 
-  if (pathname === '/api/scans') {
-    if (req.method === 'POST') {
-      try {
-        await handlePostScan(req, res);
-      } catch (err) {
-        console.error('[skinseries] request failed:', err && err.message ? err.message : err);
-        if (!res.headersSent) {
-          sendJson(res, 500, { status: 'error', errorCode: 'error_internal' });
-        }
+    if (req.method === 'POST' && pathname === '/api/practitioners') {
+      const body = await parseBody(req, res);
+      if (body !== null) handleCreatePractitioner(body, res);
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/api/login') {
+      const body = await parseBody(req, res);
+      if (body !== null) handleLogin(body, res);
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/api/try') {
+      const body = await parseBody(req, res);
+      if (body !== null) handleTry(body, res);
+      return;
+    }
+
+    // Practitioner-scoped routes.
+    if (pathname === '/api/me' || pathname.startsWith('/api/me/')) {
+      const practitioner = authPractitioner(req);
+      if (!practitioner) {
+        unauthorized(res);
+        return;
       }
+
+      if (pathname === '/api/me' && req.method === 'GET') {
+        sendJson(res, 200, publicPractitioner(practitioner));
+        return;
+      }
+      if (pathname === '/api/me' && req.method === 'PUT') {
+        const body = await parseBody(req, res);
+        if (body === null) return;
+        editableProfile(body, practitioner);
+        saveStore();
+        sendJson(res, 200, publicPractitioner(practitioner));
+        return;
+      }
+      if (pathname === '/api/me/clients' && req.method === 'GET') {
+        sendJson(res, 200, practitioner.clients.map(clientSummary));
+        return;
+      }
+      if (pathname === '/api/me/clients' && req.method === 'POST') {
+        const body = await parseBody(req, res);
+        if (body !== null) handleCreateClient(practitioner, body, res);
+        return;
+      }
+
+      const clientMatch = pathname.match(/^\/api\/me\/clients\/([^/]+)$/);
+      if (clientMatch) {
+        const client = ownClientOr404(practitioner, decodeURIComponent(clientMatch[1]), res);
+        if (!client) return;
+        if (req.method === 'GET') {
+          sendJson(res, 200, clientFull(client));
+          return;
+        }
+        if (req.method === 'DELETE') {
+          practitioner.clients = practitioner.clients.filter((c) => c.id !== client.id);
+          saveStore();
+          sendJson(res, 200, { ok: true });
+          return;
+        }
+        sendJson(res, 405, { status: 'error', errorCode: 'error_method_not_allowed' });
+        return;
+      }
+
+      const planMatch = pathname.match(/^\/api\/me\/clients\/([^/]+)\/plan$/);
+      if (planMatch && req.method === 'PUT') {
+        const client = ownClientOr404(practitioner, decodeURIComponent(planMatch[1]), res);
+        if (!client) return;
+        const body = await parseBody(req, res);
+        if (body === null) return;
+        if (typeof body.plan !== 'object' || body.plan === null) {
+          badRequest(res, 'plan must be a JSON object.');
+          return;
+        }
+        client.plan = body.plan;
+        saveStore();
+        sendJson(res, 200, clientSummary(client));
+        return;
+      }
+
+      sendJson(res, 404, { status: 'error', errorCode: 'error_not_found' });
       return;
     }
-    sendJson(res, 405, { status: 'error', errorCode: 'error_method_not_allowed' });
-    return;
-  }
 
-  const scanMatch = pathname.match(/^\/api\/scans\/([^/]+)$/);
-  if (scanMatch) {
-    if (req.method === 'GET') {
-      handleGetScan(decodeURIComponent(scanMatch[1]), res);
+    // Client-facing routes (token-keyed).
+    const publicClientMatch = pathname.match(/^\/api\/clients\/([^/]+)$/);
+    if (publicClientMatch && req.method === 'GET') {
+      handleGetPublicClient(decodeURIComponent(publicClientMatch[1]), res);
       return;
     }
-    sendJson(res, 405, { status: 'error', errorCode: 'error_method_not_allowed' });
-    return;
-  }
+    const clientScanMatch = pathname.match(/^\/api\/clients\/([^/]+)\/scans$/);
+    if (clientScanMatch && req.method === 'POST') {
+      await handlePostClientScan(decodeURIComponent(clientScanMatch[1]), req, res);
+      return;
+    }
+    const clientTaskMatch = pathname.match(/^\/api\/clients\/([^/]+)\/scans\/([^/]+)$/);
+    if (clientTaskMatch && req.method === 'GET') {
+      handleGetClientScan(
+        decodeURIComponent(clientTaskMatch[1]),
+        decodeURIComponent(clientTaskMatch[2]),
+        res
+      );
+      return;
+    }
 
-  sendJson(res, 404, { status: 'error', errorCode: 'error_not_found' });
+    sendJson(res, 404, { status: 'error', errorCode: 'error_not_found' });
+  } catch (err) {
+    console.error('[estiseries] request failed:', err && err.message ? err.message : err);
+    if (!res.headersSent) {
+      sendJson(res, 500, { status: 'error', errorCode: 'error_internal' });
+    }
+  }
 });
 
 server.listen(PORT, () => {
   console.log(
-    '[skinseries] backend proxy listening on http://localhost:' + PORT + ' (' + MODE + ' mode)'
+    '[estiseries] backend listening on http://localhost:' + PORT + ' (' + MODE + ' mode)'
   );
-  if (MODE === 'demo') {
+  if (MODE !== 'live') {
     console.log(
-      '[skinseries] demo mode — serving seeded results from assets/demo/demo_data.json; no network calls.'
+      '[estiseries] WARNING: no YOUCAM_API_KEY set — store endpoints work, scans return error_not_configured.'
     );
   } else {
-    console.log(
-      '[skinseries] live mode — YOUCAM_API_KEY is set. Live flow verified end-to-end 2026-10-19.'
-    );
+    console.log('[estiseries] live mode — YOUCAM_API_KEY is set; scans run against YouCam.');
   }
 });
