@@ -3,21 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Skin check-in — Luna Glow Skin Studio</title>
+<title>Skin check-in — EstiSeries</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header class="site-header">
   <div class="header-inner">
-    <p class="practice-mark" aria-hidden="true">LG</p>
-    <p class="practice-name" id="practiceName">Luna Glow Skin Studio</p>
+    <p class="practice-mark" id="practiceMark" aria-hidden="true">ES</p>
+    <p class="practice-name" id="practiceName">EstiSeries</p>
     <p class="practice-tagline" id="practiceTagline">Skin care, measured.</p>
-    <span class="demo-badge" id="modeBadge">Demo mode</span>
   </div>
 </header>
 
 <main class="flow">
-  <div class="progress-wrap">
+  <div class="progress-wrap" id="progressWrap" hidden>
     <p class="progress" id="progressLabel" aria-live="polite">Step 1 of 5 — Welcome</p>
     <ol class="progress-dots" id="progressDots" aria-hidden="true">
       <li class="is-active"></li><li></li><li></li><li></li><li></li>
@@ -26,28 +25,90 @@
 
   <!-- Step 0: Welcome / hero -->
   <section class="step step-hero" id="step-welcome" aria-labelledby="welcomeHeading">
-    <p class="hero-eyebrow">Your check-in with Ava Luna</p>
-    <h1 id="welcomeHeading">Your skin series, in your pocket.</h1>
-    <p class="lede">A 2-minute check-in before your visit — one photo, plain-language results, and your whole series in one place. Your results go to Ava and stay on your phone here too.</p>
+    <!-- Personal welcome: shown only when a valid client token resolves. -->
+    <div id="personalWelcome" hidden>
+      <p class="hero-eyebrow" id="welcomeEyebrow">Your personal check-in</p>
+      <h1 id="welcomeHeading">Your skin series, in your pocket.</h1>
+      <p class="lede" id="welcomeLede">A 2-minute check-in before your visit — one photo, plain-language results, and your whole series in one place.</p>
 
-    <div class="series-preview">
-      <div class="series-preview-head">
-        <h2 class="series-preview-title">Maya's series so far</h2>
-        <p class="series-preview-sub">Calm + Hydrate Renewal Series · 6 sessions</p>
+      <div class="series-preview" id="seriesPreview" hidden>
+        <div class="series-preview-head">
+          <h2 class="series-preview-title" id="seriesPreviewTitle">Your series so far</h2>
+          <p class="series-preview-sub" id="seriesPreviewSub"></p>
+        </div>
+        <div class="arc" id="heroArc"></div>
+        <h3 class="hero-deltas-title" id="heroDeltasTitle">Change since baseline</h3>
+        <div class="hero-deltas" id="heroDeltas"></div>
+        <p class="series-preview-note">Real progress, shown as it is — a couple of areas may dip slightly along the way, and you'll see those too. No filters, no cherry-picking.</p>
       </div>
-      <div class="arc" id="heroArc"></div>
-      <h3 class="hero-deltas-title">Change since baseline</h3>
-      <div class="hero-deltas" id="heroDeltas"></div>
-      <p class="series-preview-note">Real progress, shown as it is — a couple of areas dipped slightly along the way, and you'll see those too. No filters, no cherry-picking.</p>
+      <p class="series-preview-note" id="noScansNote" hidden>No scans yet — your first scan will start your series timeline.</p>
+
+      <button type="button" class="btn btn-primary btn-block" id="startBtn">Start my check-in</button>
+      <ul class="hero-points">
+        <li>No app to install</li>
+        <li>No account to create</li>
+        <li>About 2 minutes</li>
+      </ul>
+      <p class="hero-explainer" id="welcomeExplainer">This skin check-in uses a photo to create a simple, plain-language skin analysis you can review with your practitioner. Your scans stay together on one series timeline, so you can see how your skin changes across your visits.</p>
     </div>
 
-    <button type="button" class="btn btn-primary btn-block" id="startBtn">Start my check-in</button>
-    <ul class="hero-points">
-      <li>No app to install</li>
-      <li>No account to create</li>
-      <li>About 2 minutes</li>
-    </ul>
-    <p class="hero-explainer">This skin check-in uses a photo to create a simple, plain-language skin analysis you can review with Ava at Luna Glow Skin Studio. Your scans stay together on one series timeline, so you can see how your skin changes across your visits.</p>
+    <!-- Public landing: shown when there is no client token. -->
+    <div id="publicWelcome">
+      <p class="hero-eyebrow">EstiSeries · For clients</p>
+      <h1 id="publicHeading">Your skin series, in your pocket.</h1>
+      <p class="lede">Your practitioner builds your series — you check in from home with one photo, get plain-language results, and watch your progress across every session, all in one place.</p>
+
+      <div class="series-preview" aria-hidden="true">
+        <div class="series-preview-head">
+          <h2 class="series-preview-title">One timeline for your whole series</h2>
+          <p class="series-preview-sub">Baseline, every check-in, and where you are now</p>
+        </div>
+        <div class="arc">
+          <div class="arc-stop">
+            <div class="score-ring score-ring-sm" style="--p: 35"><span class="score-ring-value score-ring-decor"></span></div>
+            <p class="arc-label">Baseline</p>
+            <p class="arc-date">First scan</p>
+          </div>
+          <span class="arc-link"></span>
+          <div class="arc-stop">
+            <div class="score-ring score-ring-sm" style="--p: 60"><span class="score-ring-value score-ring-decor"></span></div>
+            <p class="arc-label">Check-ins</p>
+            <p class="arc-date">Across your series</p>
+          </div>
+          <span class="arc-link"></span>
+          <div class="arc-stop">
+            <div class="score-ring score-ring-sm" style="--p: 85"><span class="score-ring-value score-ring-decor"></span></div>
+            <p class="arc-label">Progress</p>
+            <p class="arc-date">Shown as it is</p>
+          </div>
+        </div>
+        <p class="series-preview-note">No filters, no cherry-picking — your scores, your timeline, shared with your practitioner.</p>
+      </div>
+
+      <ul class="hero-points">
+        <li>No app to install</li>
+        <li>No account to create</li>
+        <li>About 2 minutes</li>
+      </ul>
+      <p class="hero-explainer">Already a client? Use the personal link your practitioner sent you — it opens your own series, your plan, and your next check-in. New here? Try a real scan below.</p>
+    </div>
+
+    <!-- Invalid link: shown when a client token does not resolve. -->
+    <div id="invalidWelcome" hidden>
+      <p class="hero-eyebrow">EstiSeries</p>
+      <h1 id="invalidHeading">This link isn't active</h1>
+      <p class="lede" id="invalidText">This link isn't active — ask your practitioner for your personal link.</p>
+    </div>
+
+    <!-- Try-it: offered on the public landing and on the invalid-link state. -->
+    <div class="try-card" id="tryCard">
+      <h2 class="try-card-title">Try a real scan</h2>
+      <p>Enter your first name and we'll start a one-off check-in for you — a real scan with real results.</p>
+      <label class="try-label" for="tryFirstName">First name</label>
+      <input type="text" class="text-input" id="tryFirstName" autocomplete="given-name" placeholder="Your first name">
+      <button type="button" class="btn btn-primary btn-block" id="tryBtn">Try a real scan</button>
+      <p class="status-line" id="tryStatus" aria-live="polite"></p>
+    </div>
   </section>
 
   <!-- Step 1: Consent -->
@@ -61,11 +122,11 @@
       </div>
       <div class="check-row">
         <input type="checkbox" id="consent2" class="consent-check">
-        <label for="consent2">My photo is processed by a third-party skin analysis service; their copy is deleted within 24 hours.</label>
+        <label for="consent2">My photo is processed by a third-party skin analysis service, and my results are kept in my series record with <span class="practice-name-inline">your practitioner</span> so my progress can be tracked across my series. I can ask my practitioner to delete them at any time.</label>
       </div>
       <div class="check-row">
         <input type="checkbox" id="consent3" class="consent-check">
-        <label for="consent3">My results will be shared with Luna Glow Skin Studio.</label>
+        <label for="consent3">My results will be shared with <span class="practice-name-inline">your practitioner</span>.</label>
       </div>
       <div class="check-row">
         <input type="checkbox" id="consent4" class="consent-check">
@@ -73,7 +134,7 @@
       </div>
       <div class="check-row">
         <input type="checkbox" id="consent5" class="consent-check">
-        <label for="consent5">I can ask Luna Glow Skin Studio to delete my data at any time.</label>
+        <label for="consent5">I can ask <span class="practice-name-inline">your practitioner</span> to delete my data at any time.</label>
       </div>
     </form>
     <p class="hint" id="consentHint">All five boxes are needed so we can run your skin analysis.</p>
@@ -89,17 +150,29 @@
     <p>One clear, front-facing photo is all we need for your skin analysis.</p>
 
     <div class="camera-panel">
-      <video id="cameraVideo" autoplay playsinline muted hidden></video>
-      <div class="face-placeholder" id="facePlaceholder" role="img" aria-label="Demo photo placeholder showing where your face goes in the frame">
-        <div class="face-oval">
-          <span class="face-eye face-eye-left"></span>
-          <span class="face-eye face-eye-right"></span>
-          <span class="face-smile"></span>
+      <div class="camera-stage" id="cameraStage">
+        <video id="cameraVideo" autoplay playsinline muted hidden></video>
+        <img class="preview-photo" id="capturedPreview" alt="Your chosen photo" hidden>
+        <div class="face-placeholder" id="facePlaceholder" role="img" aria-label="Guide showing where your face goes in the frame">
+          <div class="face-oval">
+            <span class="face-eye face-eye-left"></span>
+            <span class="face-eye face-eye-right"></span>
+            <span class="face-smile"></span>
+          </div>
+          <p class="face-placeholder-text" id="facePlaceholderText">Your photo</p>
         </div>
-        <p class="face-placeholder-text" id="facePlaceholderText">Demo photo</p>
+        <div class="face-guide" id="faceGuide" hidden>
+          <div class="face-guide-oval is-bad" id="faceGuideOval"></div>
+          <p class="face-guide-status is-bad" id="faceGuideStatus" aria-live="polite">Position your face in the oval</p>
+        </div>
+        <button type="button" class="shutter-btn" id="analyzeBtn" aria-label="Take photo and analyze my photo">
+          <span class="shutter-ring"><span class="shutter-core"></span></span>
+          <span class="shutter-caption" id="shutterCaption">Take photo</span>
+        </button>
       </div>
       <p class="camera-note" id="cameraNote" aria-live="polite"></p>
     </div>
+    <p class="hint">The oval guide is red while your face needs adjusting and turns green when you are centered, close enough, and in good light. You can still take the photo while it is red — we will coach you if the analysis needs a clearer photo.</p>
 
     <h3 class="tips-heading">For the clearest photo</h3>
     <ul class="tips-list">
@@ -118,9 +191,9 @@
 
     <div class="btn-row btn-row-wrap">
       <button type="button" class="btn btn-ghost" id="cameraBtn">Use my camera</button>
-      <button type="button" class="btn btn-ghost" id="demoPhotoBtn">Use a demo photo instead</button>
+      <label class="btn btn-ghost" for="photoFileInput">Choose a photo</label>
+      <input type="file" class="file-input" id="photoFileInput" accept="image/*" hidden>
     </div>
-    <button type="button" class="btn btn-primary btn-block" id="analyzeBtn">Analyze my photo</button>
     <button type="button" class="btn btn-link" id="captureBackBtn">Back</button>
   </section>
 
@@ -128,6 +201,18 @@
   <section class="step" id="step-report" aria-labelledby="reportHeading" hidden>
     <h2 id="reportHeading">Your report</h2>
     <p class="step-sub">From your latest scan — <span id="reportScanMeta"></span></p>
+
+    <div class="report-photo-card" id="reportPhotoCard" hidden>
+      <h3>Your photo, mapped</h3>
+      <p class="hint">Facial zones on your analyzed photo, tinted by how each area scored. Your full scores and plain-language results are below — this picture adds to them, it never replaces them.</p>
+      <div class="report-photo-stage" id="reportPhotoStage">
+        <img class="report-photo" id="reportPhoto" alt="Your analyzed photo">
+        <div class="mask-layer" id="maskLayer"></div>
+        <div class="zone-layer" id="zoneLayer" hidden></div>
+      </div>
+      <ul class="zone-legend" id="zoneLegend"></ul>
+      <p class="hint" id="reportPhotoNote"></p>
+    </div>
 
     <div class="score-hero">
       <div class="score-ring" id="reportRing">
@@ -139,7 +224,7 @@
     </div>
 
     <h3>Top focus areas</h3>
-    <p class="hint">The areas with the lowest scores in this scan — a good place to focus daily care and your chat with Ava.</p>
+    <p class="hint">The areas with the lowest scores in this scan — a good place to focus daily care and your chat with <span id="focusPractitionerName">your practitioner</span>.</p>
     <div id="focusAreas"></div>
 
     <h3>All concerns</h3>
@@ -156,32 +241,44 @@
 
     <ol class="timeline" id="timelineList"></ol>
 
-    <h3>Change since baseline</h3>
-    <p class="hint" id="deltaHint">Session 6 compared with your baseline scan. A minus means that score is a little lower than at the start — we show it as it is.</p>
-    <table class="delta-table">
-      <thead>
-        <tr><th scope="col">Concern</th><th scope="col">Baseline</th><th scope="col" id="deltaNowHeader">Session 6</th><th scope="col">Change</th></tr>
-      </thead>
-      <tbody id="deltaTableBody"></tbody>
-    </table>
-
-    <div class="plan-card">
-      <h3>Your plan from Ava</h3>
-      <p class="plan-series" id="planSeries"></p>
-      <h4>Focus notes</h4>
-      <div id="planFocus"></div>
-      <h4>Your daily routine</h4>
-      <p><strong>Morning:</strong> <span id="planAm"></span></p>
-      <p><strong>Evening:</strong> <span id="planPm"></span></p>
-      <h4>Your products</h4>
-      <ul class="product-list" id="planProducts"></ul>
-      <p class="product-total" id="planProductsTotal"></p>
+    <div class="baseline-note" id="baselineNote" hidden>
+      <p><strong>Your series starts here.</strong> This scan is your baseline — every visit from here is measured against it. Your next scan will show your first changes.</p>
     </div>
 
-    <div class="next-card">
+    <div id="deltaSection" hidden>
+      <h3>Change since baseline</h3>
+      <p class="hint" id="deltaHint"></p>
+      <table class="delta-table">
+        <thead>
+          <tr><th scope="col">Concern</th><th scope="col">Baseline</th><th scope="col" id="deltaNowHeader">Latest</th><th scope="col">Change</th></tr>
+        </thead>
+        <tbody id="deltaTableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="plan-card" id="planCard" hidden>
+      <h3>Your plan from <span id="planPractitionerName">your practitioner</span></h3>
+      <p class="plan-series" id="planSeries"></p>
+      <div id="planFocusSection">
+        <h4>Focus notes</h4>
+        <div id="planFocus"></div>
+      </div>
+      <div id="planRegimenSection">
+        <h4>Your daily routine</h4>
+        <p id="planAmRow"><strong>Morning:</strong> <span id="planAm"></span></p>
+        <p id="planPmRow"><strong>Evening:</strong> <span id="planPm"></span></p>
+      </div>
+      <div id="planProductsSection">
+        <h4>Your products</h4>
+        <ul class="product-list" id="planProducts"></ul>
+        <p class="product-total" id="planProductsTotal"></p>
+      </div>
+    </div>
+
+    <div class="next-card" id="nextCard" hidden>
       <h3>What next?</h3>
-      <p>Series complete — Ava recommends a maintenance facial next.</p>
-      <a class="btn btn-primary btn-block" id="bookingLink" href="#" target="_blank" rel="noopener">Book your next visit</a>
+      <p id="nextCardText">Ready for your next session? Book it with your practitioner.</p>
+      <a class="btn btn-primary btn-block" id="bookingLink" href="#" target="_blank" rel="noopener">Book next session</a>
     </div>
 
     <p class="disclaimer">Cosmetic skin analysis for consultation and progress tracking. This is not a medical diagnosis.</p>
@@ -190,10 +287,9 @@
 </main>
 
 <footer class="site-footer">
-  <p>EstiSeries · Skin check-in for clients of Luna Glow Skin Studio</p>
+  <p>EstiSeries</p>
 </footer>
 
-<script src="demo-data.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
