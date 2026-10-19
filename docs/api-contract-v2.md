@@ -25,7 +25,11 @@ All bodies are JSON. Errors: `{status:"error", errorCode, message?}`.
 ScanResult: `{overall:int, skinAge:int, skinType:string, scores:{…}}` — scores
 holds the 15 camelCase concern keys (wrinkle, pore, texture, acne, oiliness,
 radiance, eyeBag, ageSpot, darkCircle, droopyUpperEyelid, droopyLowerEyelid,
-firmness, moisture, redness, tearTrough), each an int 0–100.
+firmness, moisture, redness, tearTrough), each an int 0–100. A fresh live
+result may also carry `masks:{concernKey: url}` — the provider's own
+region-mask image per concern (signed URLs, expire ~2h after the scan).
+Consumers use masks only to enhance the just-completed report (overlay on
+the analyzed photo); stored history must not depend on them.
 
 Scan record: `{taskId, label, timestamp, result}` — label is `"Baseline"` for a
 client's first scan, `"Scan N"` (N = position) afterwards; timestamp is ISO.

@@ -430,6 +430,7 @@ function providerErrorCode(data) {
 // the classification in its `skin_type` field.
 function mapProviderResult(data) {
   const scores = {};
+  const masks = {};
   let overall = null;
   let skinAge = null;
   let skinType = null;
@@ -482,6 +483,12 @@ function mapProviderResult(data) {
     }
     const concern = ITEM_TYPE_TO_CONCERN[key];
     if (concern && score !== null) scores[concern] = score;
+    if (concern && Array.isArray(item.mask_urls) && item.mask_urls[0]) {
+      // Provider-generated region mask for this concern (a signed URL that
+      // expires ~2h after the task). Additive + optional: consumers use it
+      // only to enhance a fresh report, never as the stored source of truth.
+      if (!masks[concern]) masks[concern] = item.mask_urls[0];
+    }
   }
 
   if (overall === null && Object.keys(scores).length > 0) {
@@ -492,7 +499,7 @@ function mapProviderResult(data) {
   if (overall === null && skinAge === null && Object.keys(scores).length === 0) {
     return null; // nothing recognisable in the payload
   }
-  return { overall, skinAge, skinType, scores };
+  return Object.assign({ overall, skinAge, skinType, scores }, Object.keys(masks).length ? { masks } : {});
 }
 
 // Persists a completed result into the owning client's series — exactly once
