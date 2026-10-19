@@ -44,7 +44,7 @@ class SkinSeriesApp extends StatelessWidget {
     return ListenableBuilder(
       listenable: state,
       builder: (context, _) => MaterialApp(
-        title: 'SkinSeries',
+        title: 'EstiSeries',
         debugShowCheckedModeBanner: false,
         theme: _buildTheme(state.accentColor),
         home: HomeShell(state: state),
