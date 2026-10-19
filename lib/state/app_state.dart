@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../data/catalog.dart';
 import '../models.dart';
-import '../services/demo_repository.dart';
-import '../services/skin_analysis_service.dart';
+import '../services/api_client.dart';
 
 /// The editable plan draft the Plan screen writes into.
 class PlanDraft {
   PlanDraft({
     required this.templateId,
+    required this.seriesName,
     required this.sessions,
     required this.focus,
     required this.notes,
@@ -17,6 +18,7 @@ class PlanDraft {
   });
 
   String templateId;
+  String seriesName;
   int sessions;
 
   /// Selected concern keys, in selection order.
@@ -30,85 +32,400 @@ class PlanDraft {
   final Set<String> productIds;
 }
 
-/// Single `ChangeNotifier` holding practice fields, the demo client, and the
-/// editable plan draft. Setup and Plan screens read/write it so edits flow
-/// between screens.
+/// Single `ChangeNotifier` holding the signed-in practitioner, their
+/// clients, the selected client, and the editable plan draft. All client
+/// data comes from the live backend via [EstiSeriesApi]; the practitioner
+/// token persists on device via [TokenStore].
 class AppState extends ChangeNotifier {
-  AppState(
-    this._repository, {
-    AppConfig? config,
-    SkinAnalysisService? analysisService,
-  })  : config = config ?? const AppConfig(),
-        analysisService = analysisService ??
-            DemoSkinAnalysisService(_repository.demoClient.scans),
-        practice = _repository.practice,
-        client = _repository.demoClient {
-    final seeded = client.plan;
-    draft = PlanDraft(
-      templateId: client.seriesTemplateId,
-      sessions: seeded.sessions,
-      focus: seeded.focus.map((f) => f.concern).toList(),
-      notes: {for (final f in seeded.focus) f.concern: f.note},
-      regimenAm: seeded.regimenAm,
-      regimenPm: seeded.regimenPm,
-      productIds: seeded.productIds.toSet(),
-    );
-  }
+  AppState({
+    required this.api,
+    required this.tokenStore,
+    this.config = const AppConfig(),
+  }) : draft = _defaultDraft();
 
-  final DemoRepository _repository;
-
-  /// Build-time backend configuration (demo by default; live when the app
-  /// is built with `--dart-define=SKINSERIES_LIVE=true`).
+  final EstiSeriesApi api;
+  final TokenStore tokenStore;
   final AppConfig config;
 
-  /// The analysis service behind the shared interface — demo (seeded,
-  /// local) or live (backend proxy), chosen in `main()`.
-  final SkinAnalysisService analysisService;
+  // ---- Built-in catalog ------------------------------------------------------
 
-  Practice practice;
-  final ClientProfile client;
-  late final PlanDraft draft;
-
-  /// Snapshot of the plan once "Share plan to client view" is tapped.
-  ClientPlan? sharedPlan;
-
-  List<SeriesTemplate> get templates => _repository.seriesTemplates;
-  List<Product> get products => _repository.products;
-  Map<String, String> get concernLabels => _repository.concernLabels;
-
-  /// Accent as a color, parsed from [Practice.accent] hex.
-  Color get accentColor => _hexToColor(practice.accent);
-
-  /// Display label for a concern key.
+  List<SeriesTemplate> get templates => kSeriesTemplates;
+  List<Product> get products => kProducts;
+  Map<String, String> get concernLabels => kConcernLabels;
   String labelFor(String concernKey) => concernLabels[concernKey] ?? concernKey;
 
-  // ---- Setup ---------------------------------------------------------------
+  // ---- Auth / profile --------------------------------------------------------
 
-  void updatePractice({
-    String? name,
-    String? practitioner,
-    String? bookingUrl,
-  }) {
-    practice = practice.copyWith(
-      name: name,
-      practitioner: practitioner,
-      bookingUrl: bookingUrl,
+  bool bootstrapped = false;
+  bool busy = false;
+  PractitionerProfile? profile;
+  String? authMessage;
+  String? profileMessage;
+
+  bool get isAuthenticated => profile != null;
+
+  Color get accentColor => _hexToColor(profile?.accent ?? '#B0714F');
+
+  /// Restores the persisted token (if any) and loads profile + clients.
+  /// A 401 means the saved token is stale: it is cleared and the app
+  /// returns to the create / sign-in state with a plain message.
+  Future<void> bootstrap() async {
+    try {
+      final stored = await tokenStore.read();
+      if (stored == null || stored.isEmpty) return;
+      api.token = stored;
+      profile = await api.getMe();
+      await _fetchClients();
+      if (selectedClientId == null && clients.isNotEmpty) {
+        await selectClient(clients.first.id);
+      }
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) {
+        await tokenStore.clear();
+        api.token = null;
+        profile = null;
+        authMessage =
+            'Your saved sign-in has expired. Create your practice or sign in again.';
+      } else {
+        authMessage =
+            'Could not reach the server to restore your sign-in. Check your connection and reopen the app.';
+      }
+    } catch (_) {
+      authMessage =
+          'Could not restore your sign-in. Check your connection and reopen the app.';
+    } finally {
+      bootstrapped = true;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> createPractice({
+    required String practiceName,
+    required String practitionerName,
+    required String bookingLink,
+    required String accent,
+  }) async {
+    busy = true;
+    authMessage = null;
+    notifyListeners();
+    try {
+      final result = await api.createPractitioner(
+        practiceName: practiceName,
+        practitionerName: practitionerName,
+        accent: accent,
+        bookingLink: bookingLink,
+      );
+      await _adoptSession(result);
+      return true;
+    } on ApiException catch (e) {
+      authMessage =
+          e.message ?? 'Could not create your practice (${e.errorCode}).';
+      return false;
+    } catch (_) {
+      authMessage = 'Could not reach the server. Try again.';
+      return false;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> signIn(String login, String password) async {
+    busy = true;
+    authMessage = null;
+    notifyListeners();
+    try {
+      final result = await api.login(login, password);
+      await _adoptSession(result);
+      return true;
+    } on ApiException catch (e) {
+      authMessage = e.isUnauthorized
+          ? 'That login and password did not match. Check them and try again.'
+          : e.message ?? 'Sign-in failed (${e.errorCode}).';
+      return false;
+    } catch (_) {
+      authMessage = 'Could not reach the server. Try again.';
+      return false;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _adoptSession(AuthResult result) async {
+    api.token = result.token;
+    await tokenStore.write(result.token);
+    profile = result.practitioner;
+    clients = [];
+    selectedClientId = null;
+    selectedDetail = null;
+    sharedPlan = null;
+    await _fetchClients();
+    if (clients.isNotEmpty) {
+      await selectClient(clients.first.id);
+    }
+  }
+
+  Future<void> signOut() async {
+    await tokenStore.clear();
+    api.token = null;
+    profile = null;
+    clients = [];
+    selectedClientId = null;
+    selectedDetail = null;
+    sharedPlan = null;
+    clientDetailOpen = false;
+    authMessage = null;
+    profileMessage = null;
+    draft = _defaultDraft();
+    draftVersion++;
+    tabIndex = 0;
+    notifyListeners();
+  }
+
+  Future<bool> saveProfile({
+    required String practiceName,
+    required String practitionerName,
+    required String bookingLink,
+  }) async {
+    try {
+      profile = await api.updateMe(
+        practiceName: practiceName,
+        practitionerName: practitionerName,
+        bookingLink: bookingLink,
+      );
+      profileMessage = 'Profile saved.';
+      notifyListeners();
+      return true;
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) await _expireSession();
+      profileMessage = e.message ?? 'Could not save your profile.';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Recolors the app primary from one of the three swatches and saves it.
+  Future<void> setAccent(String hex) async {
+    final current = profile;
+    if (current == null) return;
+    profile = current.copyWith(accent: hex);
+    notifyListeners();
+    try {
+      profile = await api.updateMe(accent: hex);
+      notifyListeners();
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) {
+        await _expireSession();
+      } else {
+        profileMessage = 'Accent could not be saved.';
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _expireSession() async {
+    await tokenStore.clear();
+    api.token = null;
+    profile = null;
+    clients = [];
+    selectedClientId = null;
+    selectedDetail = null;
+    authMessage =
+        'Your saved sign-in has expired. Create your practice or sign in again.';
+    notifyListeners();
+  }
+
+  // ---- Navigation --------------------------------------------------------------
+
+  /// Bottom-nav index: 0 Setup, 1 Clients, 2 Brief, 3 Plan.
+  int tabIndex = 0;
+
+  void goToTab(int index) {
+    tabIndex = index;
+    notifyListeners();
+  }
+
+  // ---- Clients -----------------------------------------------------------------
+
+  List<ClientSummary> clients = [];
+  String? selectedClientId;
+  ClientDetail? selectedDetail;
+  bool detailLoading = false;
+  bool clientDetailOpen = false;
+  String? clientsMessage;
+
+  ClientSummary? get selectedSummary {
+    for (final client in clients) {
+      if (client.id == selectedClientId) return client;
+    }
+    return null;
+  }
+
+  String clientLinkFor({required String link, required String token}) =>
+      config.clientUrl(link: link, token: token);
+
+  Future<void> refreshClients() async {
+    try {
+      await _fetchClients();
+      if (selectedClientId != null &&
+          clients.every((c) => c.id != selectedClientId)) {
+        selectedClientId = null;
+        selectedDetail = null;
+        if (clients.isNotEmpty) await selectClient(clients.first.id);
+      }
+      notifyListeners();
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) await _expireSession();
+    }
+  }
+
+  Future<void> _fetchClients() async {
+    clients = await api.listClients();
+  }
+
+  Future<void> selectClient(String clientId, {bool openDetail = false}) async {
+    selectedClientId = clientId;
+    if (openDetail) clientDetailOpen = true;
+    notifyListeners();
+    await _loadSelectedDetail();
+  }
+
+  void openSelectedClientDetail() {
+    if (selectedClientId == null) return;
+    clientDetailOpen = true;
+    tabIndex = 1;
+    notifyListeners();
+  }
+
+  void closeClientDetail() {
+    clientDetailOpen = false;
+    notifyListeners();
+  }
+
+  Future<void> refreshSelectedClient() async => _loadSelectedDetail();
+
+  Future<void> _loadSelectedDetail() async {
+    final id = selectedClientId;
+    if (id == null) return;
+    detailLoading = true;
+    notifyListeners();
+    try {
+      selectedDetail = await api.getClient(id);
+      _loadDraftFromPlan(selectedDetail!.plan);
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) {
+        await _expireSession();
+        return;
+      }
+      clientsMessage = e.message ?? 'Could not load that client.';
+    } finally {
+      detailLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> addClient(String firstName) async {
+    try {
+      final detail = await api.createClient(firstName.trim());
+      await _fetchClients();
+      await selectClient(detail.id);
+      notifyListeners();
+      return true;
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) await _expireSession();
+      clientsMessage = e.message ?? 'Could not add that client.';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> deleteClient(String clientId) async {
+    try {
+      await api.deleteClient(clientId);
+      final wasSelected = clientId == selectedClientId;
+      clients = clients.where((c) => c.id != clientId).toList();
+      clientDetailOpen = false;
+      if (wasSelected) {
+        selectedClientId = null;
+        selectedDetail = null;
+        sharedPlan = null;
+        if (clients.isNotEmpty) {
+          await selectClient(clients.first.id);
+        } else {
+          draft = _defaultDraft();
+          draftVersion++;
+        }
+      }
+      notifyListeners();
+      return true;
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) await _expireSession();
+      clientsMessage = e.message ?? 'Could not delete that client.';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  // ---- Plan draft ---------------------------------------------------------------
+
+  PlanDraft draft;
+
+  /// Bumped whenever the draft is reloaded from a client's saved plan, so
+  /// the Plan screen can resync its text controllers.
+  int draftVersion = 0;
+
+  /// Snapshot of the plan once it has been saved to the backend.
+  ClientPlan? sharedPlan;
+  String? planMessage;
+
+  static PlanDraft _defaultDraft() {
+    final template = kSeriesTemplates.first;
+    return PlanDraft(
+      templateId: template.id,
+      seriesName: template.name,
+      sessions: template.sessions,
+      focus: [...template.defaultFocus],
+      notes: {},
+      regimenAm: '',
+      regimenPm: '',
+      productIds: {},
     );
-    notifyListeners();
   }
 
-  /// Recolors the app primary from one of the three swatches.
-  void setAccent(String hex) {
-    practice = practice.copyWith(accent: hex);
-    notifyListeners();
+  void _loadDraftFromPlan(ClientPlan? plan) {
+    if (plan == null) {
+      draft = _defaultDraft();
+    } else {
+      final template = templateByName(plan.seriesName) ?? kSeriesTemplates.last;
+      final productIds = <String>{...plan.legacyProductIds};
+      for (final product in plan.products) {
+        for (final catalogProduct in kProducts) {
+          if (catalogProduct.name == product.name) {
+            productIds.add(catalogProduct.id);
+          }
+        }
+      }
+      draft = PlanDraft(
+        templateId: template.id,
+        seriesName: plan.seriesName.isEmpty ? template.name : plan.seriesName,
+        sessions: plan.sessions.clamp(1, 12),
+        focus: plan.focus.map((f) => f.concern).toList(),
+        notes: {for (final f in plan.focus) f.concern: f.note},
+        regimenAm: plan.regimenAm,
+        regimenPm: plan.regimenPm,
+        productIds: productIds,
+      );
+    }
+    sharedPlan = null;
+    planMessage = null;
+    draftVersion++;
   }
 
-  // ---- Plan draft ----------------------------------------------------------
-
-  /// Selecting a template sets session count + default focus.
   void selectTemplate(String templateId) {
-    final template = _repository.templateById(templateId);
+    final template = templateById(templateId);
     draft.templateId = template.id;
+    draft.seriesName = template.name;
     draft.sessions = template.sessions.clamp(1, 12);
     draft.focus
       ..clear()
@@ -132,13 +449,11 @@ class AppState extends ChangeNotifier {
 
   void setFocusNote(String concern, String note) {
     draft.notes[concern] = note;
-    notifyListeners();
   }
 
   void setRegimen({String? am, String? pm}) {
     if (am != null) draft.regimenAm = am;
     if (pm != null) draft.regimenPm = pm;
-    notifyListeners();
   }
 
   void toggleProduct(String productId) {
@@ -148,77 +463,44 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ---- Scan fetch ------------------------------------------------------------
+  Map<String, dynamic> buildPlanJson() => {
+        'seriesName': draft.seriesName,
+        'sessions': draft.sessions,
+        'focus': [
+          for (final concern in draft.focus)
+            {'concern': concern, 'note': draft.notes[concern] ?? ''},
+        ],
+        'regimen': {'am': draft.regimenAm, 'pm': draft.regimenPm},
+        'products': [
+          for (final product in kProducts)
+            if (draft.productIds.contains(product.id))
+              {'name': product.name, 'price': product.price},
+        ],
+      };
 
-  /// The most recent result pulled through [analysisService], if any.
-  ScanResult? fetchedResult;
-
-  /// Outcome line for the last fetch (success note or the service's own
-  /// error message), shown under the Brief screen's fetch button.
-  String? fetchMessage;
-
-  bool fetchInFlight = false;
-
-  /// The scan the Brief screen should present: the seeded latest scan, with
-  /// its result replaced once a fresher one has been fetched.
-  SkinScan get displayLatestScan {
-    final base = client.latestScan;
-    final fetched = fetchedResult;
-    if (fetched == null) return base;
-    return SkinScan(
-      id: base.id,
-      label: base.label,
-      date: base.date,
-      stage: base.stage,
-      sessionNumber: base.sessionNumber,
-      result: fetched,
-    );
-  }
-
-  /// Pulls the latest stage's result through the configured service.
-  ///
-  /// Demo service: returns the seeded result locally. Live service: asks the
-  /// backend — a demo-mode backend returns the seeded result over HTTP; a
-  /// live-mode backend refuses a photo-less request and its message is
-  /// shown verbatim. Failures land in [fetchMessage], never in fake data.
-  Future<void> fetchLatestScan() async {
-    if (fetchInFlight) return;
-    fetchInFlight = true;
-    fetchMessage = null;
-    notifyListeners();
-    try {
-      fetchedResult =
-          await analysisService.analyze(stage: client.latestScan.stage);
-      fetchMessage = config.mode == BackendMode.live
-          ? 'Updated from the backend just now.'
-          : 'Demo service — seeded result, no network call.';
-    } on ScanException catch (e) {
-      fetchMessage = e.message ?? 'Scan failed (${e.errorCode}).';
-    } catch (_) {
-      fetchMessage = 'Could not reach the analysis service.';
-    } finally {
-      fetchInFlight = false;
+  /// Saves the draft to the selected client via
+  /// PUT /api/me/clients/:id/plan.
+  Future<bool> savePlan() async {
+    final id = selectedClientId;
+    if (id == null) {
+      planMessage = 'Choose a client first.';
       notifyListeners();
+      return false;
     }
-  }
-
-  // ---- Share ---------------------------------------------------------------
-
-  /// Copies the draft into [sharedPlan] for the client preview.
-  void sharePlan() {
-    final template = _repository.templateById(draft.templateId);
-    sharedPlan = ClientPlan(
-      seriesName: template.name,
-      sessions: draft.sessions,
-      focus: [
-        for (final concern in draft.focus)
-          FocusNote(concern: concern, note: draft.notes[concern] ?? ''),
-      ],
-      productIds: draft.productIds.toList(),
-      regimenAm: draft.regimenAm,
-      regimenPm: draft.regimenPm,
-    );
-    notifyListeners();
+    try {
+      final planJson = buildPlanJson();
+      await api.updatePlan(id, planJson);
+      sharedPlan = ClientPlan.fromJson(planJson);
+      planMessage = 'Plan saved.';
+      await _fetchClients();
+      notifyListeners();
+      return true;
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) await _expireSession();
+      planMessage = e.message ?? 'Could not save the plan.';
+      notifyListeners();
+      return false;
+    }
   }
 
   static Color _hexToColor(String hex) {

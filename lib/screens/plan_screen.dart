@@ -4,7 +4,9 @@ import '../models.dart';
 import '../state/app_state.dart';
 import 'screen_scaffold.dart';
 
-/// Plan builder: template, sessions, focus notes, regimen, products, share.
+/// Plan builder for the SELECTED client: template, sessions, focus notes,
+/// regimen, products. Saving PUTs the plan to the backend, with products
+/// embedded as `{name, price}` (contract v2).
 class PlanScreen extends StatefulWidget {
   const PlanScreen({super.key, required this.state});
 
@@ -18,22 +20,40 @@ class _PlanScreenState extends State<PlanScreen> {
   late final TextEditingController _regimenAm;
   late final TextEditingController _regimenPm;
   final Map<String, TextEditingController> _noteControllers = {};
+  int _seenDraftVersion = -1;
 
   @override
   void initState() {
     super.initState();
     _regimenAm = TextEditingController(text: widget.state.draft.regimenAm);
     _regimenPm = TextEditingController(text: widget.state.draft.regimenPm);
+    _seenDraftVersion = widget.state.draftVersion;
+    widget.state.addListener(_syncFromDraft);
   }
 
   @override
   void dispose() {
+    widget.state.removeListener(_syncFromDraft);
     _regimenAm.dispose();
     _regimenPm.dispose();
     for (final controller in _noteControllers.values) {
       controller.dispose();
     }
     super.dispose();
+  }
+
+  /// When the selected client changes, AppState reloads the draft from
+  /// that client's saved plan and bumps draftVersion — resync the fields.
+  void _syncFromDraft() {
+    if (!mounted || widget.state.draftVersion == _seenDraftVersion) return;
+    _seenDraftVersion = widget.state.draftVersion;
+    _regimenAm.text = widget.state.draft.regimenAm;
+    _regimenPm.text = widget.state.draft.regimenPm;
+    for (final controller in _noteControllers.values) {
+      controller.dispose();
+    }
+    _noteControllers.clear();
+    setState(() {});
   }
 
   TextEditingController _noteFor(String concern) =>
@@ -45,10 +65,39 @@ class _PlanScreenState extends State<PlanScreen> {
   @override
   Widget build(BuildContext context) {
     final state = widget.state;
-    final draft = state.draft;
     final theme = Theme.of(context);
+
+    if (!state.isAuthenticated || state.selectedClientId == null) {
+      return ScreenScaffold(
+        title: 'Plan builder',
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'No client selected yet. Add or choose a client on the '
+                  'Clients tab and build her plan here.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () => state.goToTab(1),
+                  child: const Text('Go to Clients'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final draft = state.draft;
     final template =
         state.templates.firstWhere((t) => t.id == draft.templateId);
+    final clientName =
+        state.selectedDetail?.firstName ?? state.selectedSummary?.firstName ?? '';
 
     return ScreenScaffold(
       title: 'Plan builder',
@@ -57,6 +106,11 @@ class _PlanScreenState extends State<PlanScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Text(
+              'Plan for $clientName',
+              style: theme.textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 16),
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -232,14 +286,17 @@ class _PlanScreenState extends State<PlanScreen> {
             ),
             const SizedBox(height: 24),
             FilledButton(
-              onPressed: () => _share(context),
-              child: const Text('Share plan to client view'),
+              onPressed: () => _save(context),
+              child: const Text('Save plan'),
             ),
+            if (state.planMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(state.planMessage!, style: theme.textTheme.bodySmall),
+            ],
             if (state.sharedPlan != null) ...[
               const SizedBox(height: 16),
               _ClientPreviewCard(
                 plan: state.sharedPlan!,
-                products: state.products,
                 labelOf: state.labelFor,
               ),
             ],
@@ -249,14 +306,18 @@ class _PlanScreenState extends State<PlanScreen> {
     );
   }
 
-  void _share(BuildContext context) {
+  Future<void> _save(BuildContext context) async {
     final state = widget.state;
-    state.sharePlan();
+    final ok = await state.savePlan();
+    if (!context.mounted) return;
+    final name =
+        state.selectedDetail?.firstName ?? state.selectedSummary?.firstName ?? '';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Plan shared — ${state.client.firstName} will see it in her '
-          'series timeline',
+          ok
+              ? 'Plan saved — $name will see it in her series timeline'
+              : 'Could not save the plan.',
         ),
       ),
     );
@@ -264,14 +325,9 @@ class _PlanScreenState extends State<PlanScreen> {
 }
 
 class _ClientPreviewCard extends StatelessWidget {
-  const _ClientPreviewCard({
-    required this.plan,
-    required this.products,
-    required this.labelOf,
-  });
+  const _ClientPreviewCard({required this.plan, required this.labelOf});
 
   final ClientPlan plan;
-  final List<Product> products;
   final String Function(String) labelOf;
 
   @override
@@ -306,12 +362,10 @@ class _ClientPreviewCard extends StatelessWidget {
   }
 
   String _productSummary() {
-    final selected =
-        products.where((product) => plan.productIds.contains(product.id));
-    if (selected.isEmpty) return 'None';
-    final names = selected.map((product) => product.name).join(', ');
+    if (plan.products.isEmpty) return 'None';
+    final names = plan.products.map((product) => product.name).join(', ');
     final total =
-        selected.fold<double>(0, (sum, product) => sum + product.price);
+        plan.products.fold<double>(0, (sum, product) => sum + product.price);
     return '$names · ${_price(total)}';
   }
 }

@@ -9,7 +9,8 @@ const String kDisclaimer =
     'Cosmetic skin analysis for consultation and progress tracking. '
     'This is not a medical diagnosis.';
 
-/// Pre-visit brief: latest scan turned into a consult brief.
+/// Pre-visit brief for the SELECTED client, fed by her real stored scans
+/// (GET /api/me/clients/:id via AppState).
 class BriefScreen extends StatelessWidget {
   const BriefScreen({super.key, required this.state});
 
@@ -18,9 +19,89 @@ class BriefScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final client = state.client;
-    final baseline = client.baselineScan;
-    final latest = state.displayLatestScan;
+    final detail = state.selectedDetail;
+
+    if (!state.isAuthenticated || state.selectedClientId == null) {
+      return ScreenScaffold(
+        title: 'Pre-visit brief',
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'No client selected yet. Add a client on the Clients '
+                  'tab and her pre-visit brief will appear here.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () => state.goToTab(1),
+                  child: const Text('Go to Clients'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (detail == null || state.detailLoading) {
+      return const ScreenScaffold(
+        title: 'Pre-visit brief',
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (detail.scans.isEmpty) {
+      return ScreenScaffold(
+        title: 'Pre-visit brief',
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(detail.firstName, style: theme.textTheme.headlineSmall),
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('No scans yet', style: theme.textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${detail.firstName} has not scanned yet. Share her '
+                        'personal scan link so she can scan from home before '
+                        'her visit — her brief will build itself from that '
+                        'first scan.',
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton(
+                        onPressed: state.openSelectedClientDetail,
+                        child: const Text('View her scan link'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                kDisclaimer,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(fontStyle: FontStyle.italic),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final baseline = detail.baselineScan!;
+    final latest = detail.latestScan!;
     final focus = topFocusConcerns(latest);
     final gains = biggestGains(baseline, latest);
     final points = _talkingPoints(
@@ -29,6 +110,7 @@ class BriefScreen extends StatelessWidget {
       focus: focus,
       labelOf: state.labelFor,
     );
+    final plan = detail.plan;
 
     return ScreenScaffold(
       title: 'Pre-visit brief',
@@ -37,39 +119,24 @@ class BriefScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(client.name, style: theme.textTheme.headlineSmall),
-            const SizedBox(height: 4),
-            Text(client.seriesName, style: theme.textTheme.titleMedium),
+            Text(detail.firstName, style: theme.textTheme.headlineSmall),
             const SizedBox(height: 4),
             Text(
-              'Session ${latest.sessionNumber} of ${client.totalSessions} · '
+              plan?.seriesName ?? 'No series plan yet',
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${detail.scans.length} scan${detail.scans.length == 1 ? '' : 's'} · '
               'last scan ${_formatDate(latest.dateTime)}',
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                OutlinedButton.icon(
-                  onPressed:
-                      state.fetchInFlight ? null : state.fetchLatestScan,
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: Text(
-                    state.fetchInFlight ? 'Fetching…' : 'Fetch latest scan',
-                  ),
-                ),
-                const SizedBox(width: 12),
-                if (state.fetchedResult != null)
-                  const Chip(
-                    label: Text('From service'),
-                    visualDensity: VisualDensity.compact,
-                    side: BorderSide.none,
-                  ),
-              ],
+            OutlinedButton.icon(
+              onPressed: state.refreshSelectedClient,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Refresh scans'),
             ),
-            if (state.fetchMessage != null) ...[
-              const SizedBox(height: 8),
-              Text(state.fetchMessage!, style: theme.textTheme.bodySmall),
-            ],
             const SizedBox(height: 16),
             Row(
               children: [
@@ -118,7 +185,7 @@ class BriefScreen extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Biggest gains since baseline',
+                    Text('Biggest gains since first scan',
                         style: theme.textTheme.titleMedium),
                     const SizedBox(height: 8),
                     if (gains.isEmpty)
@@ -161,7 +228,7 @@ class BriefScreen extends StatelessWidget {
                           children: [
                             CircleAvatar(
                               radius: 12,
-                              backgroundColor: const Color(0xFFB0714F),
+                              backgroundColor: state.accentColor,
                               child: Text(
                                 '${i + 1}',
                                 style: const TextStyle(
@@ -230,11 +297,11 @@ List<String> _talkingPoints({
   final points = <String>[];
 
   if (gains.isEmpty) {
-    points.add('Every scored area is holding at or above its baseline.');
+    points.add('Every scored area is holding at or above its first scan.');
   } else {
     final top = gains.first;
     points.add(
-      '${labelOf(top.key)} is the biggest gain since baseline — up '
+      '${labelOf(top.key)} is the biggest gain since her first scan — up '
       '${top.delta} points to ${latest.result.scores[top.key]}.',
     );
   }
@@ -244,30 +311,34 @@ List<String> _talkingPoints({
       final byDelta = a.value.compareTo(b.value);
       return byDelta != 0 ? byDelta : a.key.compareTo(b.key);
     });
-  final flat = ranked.first;
-  if (flat.value < 0) {
-    points.add(
-      '${labelOf(flat.key)} is the honest flat area — down '
-      '${flat.value.abs()} points since baseline, so name it plainly.',
-    );
-  } else if (flat.value == 0) {
-    points.add(
-      '${labelOf(flat.key)} is unchanged since baseline — a steady area '
-      'to mention honestly.',
-    );
-  } else {
-    points.add(
-      'Nothing has slipped since baseline — every area sits at or above '
-      'where it started.',
-    );
+  if (ranked.isNotEmpty) {
+    final flat = ranked.first;
+    if (flat.value < 0) {
+      points.add(
+        '${labelOf(flat.key)} is the honest flat area — down '
+        '${flat.value.abs()} points since her first scan, so name it plainly.',
+      );
+    } else if (flat.value == 0) {
+      points.add(
+        '${labelOf(flat.key)} is unchanged since her first scan — a steady '
+        'area to mention honestly.',
+      );
+    } else {
+      points.add(
+        'Nothing has slipped since her first scan — every area sits at or '
+        'above where it started.',
+      );
+    }
   }
 
   final names = focus.map((entry) => labelOf(entry.key)).toList();
-  points.add(
-    '${_joinNames(names)} ${names.length == 1 ? 'is' : 'are'} where to '
-    'spend time first — ${names.length == 1 ? 'it is' : 'they are'} what '
-    "the plan's focus notes and AM/PM regimen point at.",
-  );
+  if (names.isNotEmpty) {
+    points.add(
+      '${_joinNames(names)} ${names.length == 1 ? 'is' : 'are'} where to '
+      'spend time first — ${names.length == 1 ? 'it is' : 'they are'} what '
+      "the plan's focus notes and AM/PM regimen point at.",
+    );
+  }
   return points;
 }
 
