@@ -877,6 +877,8 @@
   function renderZoneLegend() {
     var legend = el("zoneLegend");
     legend.innerHTML = "";
+    var rail = el("zoneRail");
+    if (rail) rail.innerHTML = "";
     ZONES.forEach(function (zone) {
       var score = zoneScore(zone);
       var sev = severityFor(score);
@@ -893,6 +895,22 @@
       item.appendChild(dot);
       item.appendChild(text);
       legend.appendChild(item);
+      // Reference-style score circle beside the photo (Perfect Corp layout):
+      // big number = the zone's lowest concern score, rim tinted by band.
+      if (rail) {
+        var wrap = document.createElement("div");
+        wrap.className = "zone-circle";
+        var badge = document.createElement("div");
+        badge.className = "zone-circle-badge";
+        badge.style.borderColor = sev.dot;
+        badge.textContent = score;
+        var lab = document.createElement("span");
+        lab.className = "zone-circle-label";
+        lab.textContent = zone.label;
+        wrap.appendChild(badge);
+        wrap.appendChild(lab);
+        rail.appendChild(wrap);
+      }
     });
   }
   function renderReportPhoto() {
@@ -914,7 +932,7 @@
       renderZoneFallback();
       return;
     }
-    el("reportPhotoNote").textContent = "Showing the analysis provider's own region masks on your photo, with zone scores in the legend.";
+    el("reportPhotoNote").textContent = "Showing the analysis provider's own region masks on your photo, with zone scores beside it and in the legend below.";
     var settled = 0, loaded = 0;
     urls.forEach(function (key) {
       var img = document.createElement("img");

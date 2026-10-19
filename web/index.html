@@ -205,10 +205,13 @@
     <div class="report-photo-card" id="reportPhotoCard" hidden>
       <h3>Your photo, mapped</h3>
       <p class="hint">Facial zones on your analyzed photo, tinted by how each area scored. Your full scores and plain-language results are below — this picture adds to them, it never replaces them.</p>
-      <div class="report-photo-stage" id="reportPhotoStage">
-        <img class="report-photo" id="reportPhoto" alt="Your analyzed photo">
-        <div class="mask-layer" id="maskLayer"></div>
-        <div class="zone-layer" id="zoneLayer" hidden></div>
+      <div class="report-photo-wrap">
+        <div class="report-photo-stage" id="reportPhotoStage">
+          <img class="report-photo" id="reportPhoto" alt="Your analyzed photo">
+          <div class="mask-layer" id="maskLayer"></div>
+          <div class="zone-layer" id="zoneLayer" hidden></div>
+        </div>
+        <div class="zone-rail" id="zoneRail" aria-label="Zone scores"></div>
       </div>
       <ul class="zone-legend" id="zoneLegend"></ul>
       <p class="hint" id="reportPhotoNote"></p>
