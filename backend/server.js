@@ -15,9 +15,9 @@
 //       4. GET  /s2s/v2.0/task/skin-analysis/<task_id> until complete
 //       5. Map the response into the shared ScanResult shape from SPEC.md
 //
-// IMPORTANT: the live path is written to the published YouCam docs but is
-// UNTESTED end-to-end until a real API key exists. The response mapper is
-// deliberately defensive about field names for that reason. Nothing here is
+// The live path is written to the published YouCam docs and was verified
+// end-to-end against the real API on 2026-10-19 (the real payload shape is
+// documented at mapProviderResult; a captured sample is raw-sample.json). Nothing here is
 // faked — when a key is present the requests really go to YouCam.
 
 const http = require('node:http');
@@ -303,33 +303,48 @@ function providerErrorCode(data) {
   const code =
     (data && (data.error_code || data.errorCode)) ||
     (data && data.error && (data.error.code || data.error.error_code)) ||
+    // Real failure payloads (verified 2026-10-19) carry the code as a plain
+    // string in `error`, e.g. "error_src_face_too_small". The client coaching
+    // loop keys off these codes, so they must survive mapping instead of
+    // collapsing into error_analysis_failed.
+    (data && typeof data.error === 'string' && data.error ? data.error : null) ||
     (data && data.code) ||
     null;
   return code ? String(code) : 'error_analysis_failed';
 }
 
 // ---------------------------------------------------------------------------
-// Live YouCam flow (UNTESTED until a real API key exists — see file header)
+// Live YouCam flow (verified end-to-end 2026-10-19 — see file header)
 // ---------------------------------------------------------------------------
 
 // Maps a completed YouCam task payload into the shared ScanResult shape
 // (SPEC.md). YouCam returns health scores per concern (`ui_score`, higher =
-// healthier, 0–100) plus overall / skin age / skin type items. Field names below
-// follow the published docs; lookups are defensive because this path has not
-// been exercised against a live key yet.
+// healthier, 0–100) plus overall / skin age / skin type items. The item layout
+// below is the real one, captured from a live task on 2026-10-19 (see
+// raw-sample.json): `data.results` is an envelope whose `output` array holds
+// one item per action - concern items carry `ui_score`, the `all` item
+// carries the overall as a float `score`, `skin_age` carries `score`, and
+// `skin_type` arrives as one item per region (whole / t_zone / u_zone) with
+// the classification in its `skin_type` field.
 function mapProviderResult(data) {
   const scores = {};
   let overall = null;
   let skinAge = null;
   let skinType = null;
 
+  // Real payload: `results` is an envelope object, NOT the item array -
+  // the items live at `results.output`. The flatter shapes are fallbacks.
   const items = Array.isArray(data)
     ? data
-    : Array.isArray(data.results)
-      ? data.results
-      : Array.isArray(data.items)
-        ? data.items
-        : [];
+    : data.results && Array.isArray(data.results.output)
+      ? data.results.output
+      : Array.isArray(data.results)
+        ? data.results
+        : Array.isArray(data.items)
+          ? data.items
+          : Array.isArray(data.output)
+            ? data.output
+            : [];
 
   for (const item of items) {
     if (!item || typeof item !== 'object') continue;
@@ -338,7 +353,9 @@ function mapProviderResult(data) {
     const score = numberOr(item.ui_score, item.score, item.value);
 
     if (key === 'all' || key === 'overall') {
-      overall = score;
+      // The `all` item carries a float score (e.g. 74.73); ScanResult's
+      // overall is an integer everywhere else (demo data, fallback average).
+      overall = score === null ? null : Math.round(score);
       continue;
     }
     if (key === 'skin_age' || key === 'skinage') {
@@ -346,7 +363,19 @@ function mapProviderResult(data) {
       continue;
     }
     if (key === 'skin_type' || key === 'skintype') {
-      skinType = stringOr(item.value, item.label, item.class, item.score, item.type_value);
+      // Real payload: one item per region with the classification in
+      // `skin_type`. The whole-face region wins; other regions only fill in
+      // while it is missing.
+      const classified = stringOr(
+        item.skin_type,
+        item.value,
+        item.label,
+        item.class,
+        item.type_value
+      );
+      if (classified && (item.region === 'whole' || skinType === null)) {
+        skinType = classified;
+      }
       continue;
     }
     const concern = ITEM_TYPE_TO_CONCERN[key];
@@ -675,7 +704,7 @@ server.listen(PORT, () => {
     );
   } else {
     console.log(
-      '[skinseries] live mode — YOUCAM_API_KEY is set. The YouCam flow is written to the docs but UNTESTED until the key is verified.'
+      '[skinseries] live mode — YOUCAM_API_KEY is set. Live flow verified end-to-end 2026-10-19.'
     );
   }
 });
