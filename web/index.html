@@ -10,7 +10,7 @@
 <header class="site-header">
   <p class="practice-name" id="practiceName">Luna Glow Skin Studio</p>
   <p class="practice-tagline" id="practiceTagline">Skin care, measured.</p>
-  <span class="demo-badge">Demo mode</span>
+  <span class="demo-badge" id="modeBadge">Demo mode</span>
 </header>
 
 <main class="flow">
@@ -129,10 +129,10 @@
     <ol class="timeline" id="timelineList"></ol>
 
     <h3>Change since baseline</h3>
-    <p class="hint">Session 6 compared with your baseline scan. A minus means that score is a little lower than at the start — we show it as it is.</p>
+    <p class="hint" id="deltaHint">Session 6 compared with your baseline scan. A minus means that score is a little lower than at the start — we show it as it is.</p>
     <table class="delta-table">
       <thead>
-        <tr><th scope="col">Concern</th><th scope="col">Baseline</th><th scope="col">Session 6</th><th scope="col">Change</th></tr>
+        <tr><th scope="col">Concern</th><th scope="col">Baseline</th><th scope="col" id="deltaNowHeader">Session 6</th><th scope="col">Change</th></tr>
       </thead>
       <tbody id="deltaTableBody"></tbody>
     </table>

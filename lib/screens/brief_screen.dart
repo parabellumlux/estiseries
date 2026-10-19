@@ -20,7 +20,7 @@ class BriefScreen extends StatelessWidget {
     final theme = Theme.of(context);
     final client = state.client;
     final baseline = client.baselineScan;
-    final latest = client.latestScan;
+    final latest = state.displayLatestScan;
     final focus = topFocusConcerns(latest);
     final gains = biggestGains(baseline, latest);
     final points = _talkingPoints(
@@ -46,6 +46,30 @@ class BriefScreen extends StatelessWidget {
               'last scan ${_formatDate(latest.dateTime)}',
               style: theme.textTheme.bodySmall,
             ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed:
+                      state.fetchInFlight ? null : state.fetchLatestScan,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: Text(
+                    state.fetchInFlight ? 'Fetching…' : 'Fetch latest scan',
+                  ),
+                ),
+                const SizedBox(width: 12),
+                if (state.fetchedResult != null)
+                  const Chip(
+                    label: Text('From service'),
+                    visualDensity: VisualDensity.compact,
+                    side: BorderSide.none,
+                  ),
+              ],
+            ),
+            if (state.fetchMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(state.fetchMessage!, style: theme.textTheme.bodySmall),
+            ],
             const SizedBox(height: 16),
             Row(
               children: [

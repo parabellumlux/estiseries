@@ -4,6 +4,7 @@ import 'screens/brief_screen.dart';
 import 'screens/plan_screen.dart';
 import 'screens/setup_screen.dart';
 import 'services/demo_repository.dart';
+import 'services/skin_analysis_service.dart';
 import 'state/app_state.dart';
 
 const Color kCream = Color(0xFFFAF6F1);
@@ -15,7 +16,22 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final repository = DemoRepository();
   await repository.load();
-  runApp(SkinSeriesApp(state: AppState(repository)));
+  // Service selection follows AppConfig: demo (seeded, local) by default;
+  // live (backend proxy) when built with --dart-define=SKINSERIES_LIVE=true.
+  final config = AppConfig.fromEnvironment();
+  final SkinAnalysisService analysisService =
+      config.mode == BackendMode.live
+          ? LiveSkinAnalysisService(config: config)
+          : DemoSkinAnalysisService(repository.demoClient.scans);
+  runApp(
+    SkinSeriesApp(
+      state: AppState(
+        repository,
+        config: config,
+        analysisService: analysisService,
+      ),
+    ),
+  );
 }
 
 class SkinSeriesApp extends StatelessWidget {

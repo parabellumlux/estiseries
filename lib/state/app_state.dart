@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../services/demo_repository.dart';
+import '../services/skin_analysis_service.dart';
 
 /// The editable plan draft the Plan screen writes into.
 class PlanDraft {
@@ -33,8 +34,14 @@ class PlanDraft {
 /// editable plan draft. Setup and Plan screens read/write it so edits flow
 /// between screens.
 class AppState extends ChangeNotifier {
-  AppState(this._repository)
-      : practice = _repository.practice,
+  AppState(
+    this._repository, {
+    AppConfig? config,
+    SkinAnalysisService? analysisService,
+  })  : config = config ?? const AppConfig(),
+        analysisService = analysisService ??
+            DemoSkinAnalysisService(_repository.demoClient.scans),
+        practice = _repository.practice,
         client = _repository.demoClient {
     final seeded = client.plan;
     draft = PlanDraft(
@@ -49,6 +56,14 @@ class AppState extends ChangeNotifier {
   }
 
   final DemoRepository _repository;
+
+  /// Build-time backend configuration (demo by default; live when the app
+  /// is built with `--dart-define=SKINSERIES_LIVE=true`).
+  final AppConfig config;
+
+  /// The analysis service behind the shared interface — demo (seeded,
+  /// local) or live (backend proxy), chosen in `main()`.
+  final SkinAnalysisService analysisService;
 
   Practice practice;
   final ClientProfile client;
@@ -131,6 +146,60 @@ class AppState extends ChangeNotifier {
       draft.productIds.add(productId);
     }
     notifyListeners();
+  }
+
+  // ---- Scan fetch ------------------------------------------------------------
+
+  /// The most recent result pulled through [analysisService], if any.
+  ScanResult? fetchedResult;
+
+  /// Outcome line for the last fetch (success note or the service's own
+  /// error message), shown under the Brief screen's fetch button.
+  String? fetchMessage;
+
+  bool fetchInFlight = false;
+
+  /// The scan the Brief screen should present: the seeded latest scan, with
+  /// its result replaced once a fresher one has been fetched.
+  SkinScan get displayLatestScan {
+    final base = client.latestScan;
+    final fetched = fetchedResult;
+    if (fetched == null) return base;
+    return SkinScan(
+      id: base.id,
+      label: base.label,
+      date: base.date,
+      stage: base.stage,
+      sessionNumber: base.sessionNumber,
+      result: fetched,
+    );
+  }
+
+  /// Pulls the latest stage's result through the configured service.
+  ///
+  /// Demo service: returns the seeded result locally. Live service: asks the
+  /// backend — a demo-mode backend returns the seeded result over HTTP; a
+  /// live-mode backend refuses a photo-less request and its message is
+  /// shown verbatim. Failures land in [fetchMessage], never in fake data.
+  Future<void> fetchLatestScan() async {
+    if (fetchInFlight) return;
+    fetchInFlight = true;
+    fetchMessage = null;
+    notifyListeners();
+    try {
+      fetchedResult =
+          await analysisService.analyze(stage: client.latestScan.stage);
+      fetchMessage = config.mode == BackendMode.live
+          ? 'Updated from the backend just now.'
+          : 'Demo service — seeded result, no network call.';
+    } on ScanException catch (e) {
+      fetchMessage = e.message ?? 'Scan failed (${e.errorCode}).';
+    } catch (_) {
+      fetchMessage = 'Could not reach the analysis service.';
+    } finally {
+      fetchInFlight = false;
+      notifyListeners();
+    }
   }
 
   // ---- Share ---------------------------------------------------------------
