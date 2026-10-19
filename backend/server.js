@@ -828,15 +828,12 @@ function handleGetPublicClient(token, res) {
   });
 }
 
-async function handlePostClientScan(token, req, res) {
+async function handlePostClientScan(token, body, res) {
   const found = findClientByToken(token);
   if (!found) {
     notFound(res, 'error_client_not_found', 'This link is not active.');
     return;
   }
-  const body = await parseBody(req, res);
-  if (body === null) return;
-
   // Simulated errors mirror the YouCam error surface so the client coaching
   // loop can rehearse before a real photo is sent. No provider call, no
   // units, nothing stored.
@@ -932,6 +929,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Read request bodies up front: answering an early error (401/404)
+  // without consuming a POST/PUT body can reset the connection through
+  // keep-alive proxies (observed via nginx: intermittent empty replies on
+  // cross-owner PUTs). With the body drained first, every response is clean.
+  let body = null;
+  if (req.method === 'POST' || req.method === 'PUT') {
+    body = await parseBody(req, res);
+    if (body === null) return;
+  }
+
   try {
     if (req.method === 'GET' && pathname === '/health') {
       sendJson(res, 200, { ok: true, mode: MODE });
@@ -939,20 +946,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && pathname === '/api/practitioners') {
-      const body = await parseBody(req, res);
-      if (body !== null) handleCreatePractitioner(body, res);
+      handleCreatePractitioner(body, res);
       return;
     }
 
     if (req.method === 'POST' && pathname === '/api/login') {
-      const body = await parseBody(req, res);
-      if (body !== null) handleLogin(body, res);
+      handleLogin(body, res);
       return;
     }
 
     if (req.method === 'POST' && pathname === '/api/try') {
-      const body = await parseBody(req, res);
-      if (body !== null) handleTry(body, res);
+      handleTry(body, res);
       return;
     }
 
@@ -969,8 +973,6 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (pathname === '/api/me' && req.method === 'PUT') {
-        const body = await parseBody(req, res);
-        if (body === null) return;
         editableProfile(body, practitioner);
         saveStore();
         sendJson(res, 200, publicPractitioner(practitioner));
@@ -981,8 +983,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (pathname === '/api/me/clients' && req.method === 'POST') {
-        const body = await parseBody(req, res);
-        if (body !== null) handleCreateClient(practitioner, body, res);
+        handleCreateClient(practitioner, body, res);
         return;
       }
 
@@ -1008,8 +1009,6 @@ const server = http.createServer(async (req, res) => {
       if (planMatch && req.method === 'PUT') {
         const client = ownClientOr404(practitioner, decodeURIComponent(planMatch[1]), res);
         if (!client) return;
-        const body = await parseBody(req, res);
-        if (body === null) return;
         if (typeof body.plan !== 'object' || body.plan === null) {
           badRequest(res, 'plan must be a JSON object.');
           return;
@@ -1032,7 +1031,7 @@ const server = http.createServer(async (req, res) => {
     }
     const clientScanMatch = pathname.match(/^\/api\/clients\/([^/]+)\/scans$/);
     if (clientScanMatch && req.method === 'POST') {
-      await handlePostClientScan(decodeURIComponent(clientScanMatch[1]), req, res);
+      await handlePostClientScan(decodeURIComponent(clientScanMatch[1]), body, res);
       return;
     }
     const clientTaskMatch = pathname.match(/^\/api\/clients\/([^/]+)\/scans\/([^/]+)$/);
