@@ -8,21 +8,46 @@
 </head>
 <body>
 <header class="site-header">
-  <p class="practice-name" id="practiceName">Luna Glow Skin Studio</p>
-  <p class="practice-tagline" id="practiceTagline">Skin care, measured.</p>
-  <span class="demo-badge" id="modeBadge">Demo mode</span>
+  <div class="header-inner">
+    <p class="practice-mark" aria-hidden="true">LG</p>
+    <p class="practice-name" id="practiceName">Luna Glow Skin Studio</p>
+    <p class="practice-tagline" id="practiceTagline">Skin care, measured.</p>
+    <span class="demo-badge" id="modeBadge">Demo mode</span>
+  </div>
 </header>
 
 <main class="flow">
-  <p class="progress" id="progressLabel" aria-live="polite">Step 1 of 5 — Welcome</p>
+  <div class="progress-wrap">
+    <p class="progress" id="progressLabel" aria-live="polite">Step 1 of 5 — Welcome</p>
+    <ol class="progress-dots" id="progressDots" aria-hidden="true">
+      <li class="is-active"></li><li></li><li></li><li></li><li></li>
+    </ol>
+  </div>
 
-  <!-- Step 0: Welcome -->
-  <section class="step" id="step-welcome" aria-labelledby="welcomeHeading">
-    <h1 id="welcomeHeading">Skin check-in for Maya R.</h1>
-    <p class="lede">A 2-minute skin check-in before your visit — your results go to Ava and stay on your phone here too.</p>
-    <p>This skin check-in uses a photo to create a simple, plain-language skin analysis you can review with Ava at Luna Glow Skin Studio. Your scans stay together on one series timeline, so you can see how your skin changes across your visits.</p>
-    <p>No app to install and no account to create — just a few quick steps.</p>
-    <button type="button" class="btn btn-primary" id="startBtn">Start my check-in</button>
+  <!-- Step 0: Welcome / hero -->
+  <section class="step step-hero" id="step-welcome" aria-labelledby="welcomeHeading">
+    <p class="hero-eyebrow">Your check-in with Ava Luna</p>
+    <h1 id="welcomeHeading">Your skin series, in your pocket.</h1>
+    <p class="lede">A 2-minute check-in before your visit — one photo, plain-language results, and your whole series in one place. Your results go to Ava and stay on your phone here too.</p>
+
+    <div class="series-preview">
+      <div class="series-preview-head">
+        <h2 class="series-preview-title">Maya's series so far</h2>
+        <p class="series-preview-sub">Calm + Hydrate Renewal Series · 6 sessions</p>
+      </div>
+      <div class="arc" id="heroArc"></div>
+      <h3 class="hero-deltas-title">Change since baseline</h3>
+      <div class="hero-deltas" id="heroDeltas"></div>
+      <p class="series-preview-note">Real progress, shown as it is — a couple of areas dipped slightly along the way, and you'll see those too. No filters, no cherry-picking.</p>
+    </div>
+
+    <button type="button" class="btn btn-primary btn-block" id="startBtn">Start my check-in</button>
+    <ul class="hero-points">
+      <li>No app to install</li>
+      <li>No account to create</li>
+      <li>About 2 minutes</li>
+    </ul>
+    <p class="hero-explainer">This skin check-in uses a photo to create a simple, plain-language skin analysis you can review with Ava at Luna Glow Skin Studio. Your scans stay together on one series timeline, so you can see how your skin changes across your visits.</p>
   </section>
 
   <!-- Step 1: Consent -->
@@ -105,8 +130,11 @@
     <p class="step-sub">From your latest scan — <span id="reportScanMeta"></span></p>
 
     <div class="score-hero">
-      <p class="score-hero-label">Overall score</p>
-      <p class="score-hero-value"><span id="reportOverall">–</span><span class="score-hero-max"> / 100</span></p>
+      <div class="score-ring" id="reportRing">
+        <span class="score-ring-value"><span id="reportOverall">–</span></span>
+      </div>
+      <p class="score-hero-label">Overall score / 100</p>
+      <p class="score-delta" id="reportDelta"></p>
       <p class="score-hero-meta">Skin age <strong id="reportSkinAge">–</strong> · Skin type <strong id="reportSkinType">–</strong></p>
     </div>
 

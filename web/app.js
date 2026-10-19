@@ -46,6 +46,10 @@
     currentStep = index;
     steps.forEach(function (id, i) { el(id).hidden = i !== index; });
     el("progressLabel").textContent = "Step " + (index + 1) + " of " + steps.length + " — " + stepNames[index];
+    var dots = el("progressDots").children;
+    for (var d = 0; d < dots.length; d++) {
+      dots[d].className = d < index ? "is-done" : d === index ? "is-active" : "";
+    }
     window.scrollTo(0, 0);
   }
 
@@ -55,6 +59,58 @@
   document.title = "Skin check-in — " + practice.name;
   if (practice.accent) {
     document.documentElement.style.setProperty("--terra", practice.accent);
+  }
+
+  // ---- Welcome hero: the client's series, up front ----
+  // Renders the seeded series as score rings (61 -> 68 -> 74) plus delta
+  // chips — plan focus areas first, then any honest declines — so the value
+  // of the product is visible before the first tap.
+  function renderHero() {
+    var arc = el("heroArc");
+    arc.innerHTML = "";
+    scans.forEach(function (scan, i) {
+      if (i > 0) {
+        var link = document.createElement("span");
+        link.className = "arc-link";
+        link.setAttribute("aria-hidden", "true");
+        arc.appendChild(link);
+      }
+      var stop = document.createElement("div");
+      stop.className = "arc-stop";
+      var ring = document.createElement("div");
+      ring.className = "score-ring score-ring-sm";
+      ring.style.setProperty("--p", scan.overall);
+      var value = document.createElement("span");
+      value.className = "score-ring-value";
+      value.textContent = scan.overall;
+      ring.appendChild(value);
+      var label = document.createElement("p");
+      label.className = "arc-label";
+      label.textContent = scan.label;
+      var date = document.createElement("p");
+      date.className = "arc-date";
+      date.textContent = formatDateShort(scan.date);
+      stop.appendChild(ring);
+      stop.appendChild(label);
+      stop.appendChild(date);
+      arc.appendChild(stop);
+    });
+
+    var chips = el("heroDeltas");
+    chips.innerHTML = "";
+    function addChip(key) {
+      var delta = latest.scores[key] - baseline.scores[key];
+      if (delta === 0) return;
+      var chip = document.createElement("span");
+      chip.className = "delta-chip " + (delta > 0 ? "delta-chip-up" : "delta-chip-down");
+      chip.textContent = (concernLabels[key] || key) + " " +
+        (delta > 0 ? "+" + delta : "−" + Math.abs(delta));
+      chips.appendChild(chip);
+    }
+    plan.focus.forEach(function (f) { addChip(f.concern); });
+    data.concerns.forEach(function (c) {
+      if (latest.scores[c.key] - baseline.scores[c.key] < 0) addChip(c.key);
+    });
   }
 
   el("startBtn").addEventListener("click", function () { showStep(1); });
@@ -90,8 +146,10 @@
   // The backend lives on the same host as this page, port 8787 (this page
   // is served statically on another port). window.BACKEND_BASE_URL can
   // override the base before this script loads.
-  var BACKEND_BASE = window.BACKEND_BASE_URL ||
-    (location.protocol + "//" + location.hostname + ":8787");
+  // Trailing slashes are stripped so a same-origin override of "/" (used by
+  // the hosted deployment) yields "/health" and "/api/scans", not "//health".
+  var BACKEND_BASE = (window.BACKEND_BASE_URL ||
+    (location.protocol + "//" + location.hostname + ":8787")).replace(/\/+$/, "");
   var COACHING = {
     error_lighting_dark: "It's a bit dark — face a window or turn on a brighter light, then try again.",
     error_src_face_too_small: "Move a little closer so your face fills the frame."
@@ -410,6 +468,16 @@
   function renderReport() {
     el("reportScanMeta").textContent = currentScan.label + " · " + formatDate(currentScan.date);
     el("reportOverall").textContent = currentScan.overall;
+    el("reportRing").style.setProperty("--p", currentScan.overall);
+    var overallDelta = currentScan.overall - baseline.overall;
+    el("reportDelta").textContent =
+      currentScan.stage === baseline.stage
+        ? "Your starting point — this is the scan every visit is measured against."
+        : overallDelta > 0
+          ? "+" + overallDelta + " since your baseline (" + baseline.overall + ")"
+          : overallDelta < 0
+            ? "−" + Math.abs(overallDelta) + " since your baseline (" + baseline.overall + ") — shown as it is"
+            : "Same overall score as your baseline (" + baseline.overall + ")";
     el("reportSkinAge").textContent = currentScan.skinAge;
     el("reportSkinType").textContent = currentScan.skinType;
 
@@ -504,9 +572,17 @@
       score.className = "timeline-stop-score";
       score.textContent = "Overall " + scan.overall + " · Skin age " + scan.skinAge + " · " + scan.skinType;
 
+      var track = document.createElement("div");
+      track.className = "bar-track timeline-bar";
+      var fill = document.createElement("div");
+      fill.className = "bar-fill";
+      fill.style.width = scan.overall + "%";
+      track.appendChild(fill);
+
       item.appendChild(label);
       item.appendChild(date);
       item.appendChild(score);
+      item.appendChild(track);
       list.appendChild(item);
     });
 
@@ -595,5 +671,6 @@
     booking.textContent = "Book your next visit";
   }
 
+  renderHero();
   showStep(0);
 })();
