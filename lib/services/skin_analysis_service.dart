@@ -8,7 +8,7 @@ class AppConfig {
   const AppConfig({this.backendBaseUrl = defaultBackendBaseUrl});
 
   /// Android emulator loopback to the machine running the backend proxy.
-  static const String defaultBackendBaseUrl = 'http://10.0.2.2:8787';
+  static const String defaultBackendBaseUrl = 'http://192.168.1.223:8787';
 
   final String backendBaseUrl;
 }
