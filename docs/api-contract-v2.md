@@ -78,6 +78,28 @@ YouCam key is set; scan POSTs then fail 503 `error_not_configured`).
   "EstiSeries Sample Studio"). The visitor then uses the normal client
   endpoints with that token. No seeded data is involved anywhere.
 
+### Sign-in (demo judge account)
+- `POST /api/login` `{login, password}` → `{token, practitioner}` (profile
+  shape as GET /api/me) or 401 `error_unauthorized`. Exists so the app can
+  sign in as the seeded demo practitioner; regular practitioners use their
+  device-stored token.
+
+## Seeded judge accounts (the ONLY seeded data left)
+
+Created by the backend at store init when absent, flagged `demo: true`:
+
+- **Demo practitioner** — Luna Glow Skin Studio, practitioner Ava Luna,
+  accent `#B0714F`, the demo dataset's booking link. Sign-in:
+  login `demo@estiseries.app`, password `GlowDemo2026` (returns her
+  practitioner token via `POST /api/login`).
+- **Demo client** — Maya R., her existing plan, and her three historical
+  scans (Jul 13 / Aug 24 / Oct 5, 2026) as stored scan records. Client token
+  is the fixed, shareable `demo-maya-r` → link `/?c=demo-maya-r`.
+
+These exist so judges can be handed a login and a client link. They are
+never returned by any other client's or practitioner's view, and the public
+try-it path never touches them.
+
 ## Retired
 
 `POST /api/scans` with `{demoStage}` and the seeded demo store are gone.
