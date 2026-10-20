@@ -54,6 +54,22 @@ const DEMO_PASSWORD = 'GlowDemo2026';
 const DEMO_CLIENT_TOKEN = 'demo-maya-r';
 const SAMPLE_PRACTICE_NAME = 'EstiSeries Sample Studio';
 
+// Practice logos (v2.1): the uploaded bytes live on disk under
+// backend/logos/ — the JSON store only keeps {ext, updatedAt}. Only these
+// raster types are accepted.
+const LOGOS_DIR = path.join(__dirname, 'logos');
+const LOGO_EXT_BY_CONTENT_TYPE = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+};
+const LOGO_CONTENT_TYPE_BY_EXT = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  webp: 'image/webp',
+};
+const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+
 // SD (standard-definition) concern list sent with the task request. Simultaneous
 // SD + HD concern parameters are not supported by the API, so this stays SD.
 const SD_ACTIONS = [
@@ -187,6 +203,8 @@ function publicPractitioner(p) {
     bookingLink: p.bookingLink,
     createdAt: p.createdAt,
     clientCount: p.clients.length,
+    logoUrl: p.logo ? '/api/practitioners/' + p.id + '/logo' : null,
+    offerings: p.offerings || [],
   };
 }
 
@@ -285,6 +303,52 @@ function seedStore() {
 }
 
 seedStore();
+
+// ---------------------------------------------------------------------------
+// Migration (v2.1) — practitioner records gain `offerings` and `logo`.
+// Runs after seeding so freshly seeded records are covered too. The demo
+// practitioner, if she has no offerings field at all, is seeded with a
+// small menu so the judge accounts show the feature working; no other
+// practitioner's data changes.
+// ---------------------------------------------------------------------------
+
+function migrateStore() {
+  let changed = false;
+  const now = new Date().toISOString();
+  const seedOffering = (fields) =>
+    Object.assign({ id: crypto.randomUUID(), active: true, createdAt: now }, fields);
+
+  for (const p of store.practitioners) {
+    if (p.demo && p.login && p.login.login === DEMO_LOGIN && p.offerings === undefined) {
+      p.offerings = [
+        seedOffering({ kind: 'service', name: 'Botox® Cosmetic', price: 12, unit: 'per unit' }),
+        seedOffering({
+          kind: 'service',
+          name: 'RF Microneedling',
+          price: 350,
+          unit: 'per session',
+          durationMin: 60,
+        }),
+        seedOffering({ kind: 'service', name: 'Signature Glow Facial', price: 120, durationMin: 60 }),
+        seedOffering({ kind: 'product', name: 'Gentle Renewal Cleanser', price: 38 }),
+        seedOffering({ kind: 'product', name: 'Hydration Boost Serum', price: 64 }),
+      ];
+      changed = true;
+    }
+    if (!Array.isArray(p.offerings)) {
+      p.offerings = [];
+      changed = true;
+    }
+    if (!('logo' in p)) {
+      p.logo = null;
+      changed = true;
+    }
+  }
+
+  if (changed) saveStore();
+}
+
+migrateStore();
 
 // ---------------------------------------------------------------------------
 // Live task store (in-memory only; a restart clears running task ids —
@@ -735,6 +799,8 @@ function handleCreatePractitioner(body, res) {
     sample: false,
     demo: false,
     login: null,
+    offerings: [],
+    logo: null,
     clients: [],
   };
   store.practitioners.push(practitioner);
@@ -798,6 +864,161 @@ function ownClientOr404(practitioner, clientId, res) {
   return client;
 }
 
+// --- Offerings (v2.1): the practitioner's own services & products --------
+
+// Validates an offering body; returns the editable fields, or null when
+// the body is not a usable offering (the routes answer
+// error_invalid_offering).
+function validateOffering(body) {
+  if (!body || typeof body !== 'object') return null;
+  if (body.kind !== 'service' && body.kind !== 'product') return null;
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name || name.length > 120) return null;
+  if (typeof body.price !== 'number' || !Number.isFinite(body.price)) return null;
+  if (body.price < 0 || body.price > 100000) return null;
+  const fields = { kind: body.kind, name, price: body.price };
+  if (typeof body.unit === 'string' && body.unit.trim()) fields.unit = body.unit.trim();
+  if (body.durationMin !== undefined && body.durationMin !== null) {
+    if (
+      !Number.isInteger(body.durationMin) ||
+      body.durationMin < 0 ||
+      body.durationMin > 1440
+    ) {
+      return null;
+    }
+    fields.durationMin = body.durationMin;
+  }
+  if (typeof body.description === 'string' && body.description.trim()) {
+    fields.description = body.description.trim();
+  }
+  return fields;
+}
+
+function invalidOffering(res) {
+  sendJson(res, 400, { status: 'error', errorCode: 'error_invalid_offering' });
+}
+
+function handleCreateOffering(practitioner, body, res) {
+  const fields = validateOffering(body);
+  if (!fields) {
+    invalidOffering(res);
+    return;
+  }
+  const offering = Object.assign(
+    {
+      id: crypto.randomUUID(),
+      active: typeof body.active === 'boolean' ? body.active : true,
+      createdAt: new Date().toISOString(),
+    },
+    fields
+  );
+  practitioner.offerings.push(offering);
+  saveStore();
+  sendJson(res, 201, offering);
+}
+
+function handleUpdateOffering(practitioner, offeringId, body, res) {
+  const offering = practitioner.offerings.find((o) => o.id === offeringId);
+  if (!offering) {
+    notFound(res, 'error_offering_not_found', 'No such offering for this practitioner.');
+    return;
+  }
+  const fields = validateOffering(body);
+  if (!fields) {
+    invalidOffering(res);
+    return;
+  }
+  // Replace the editable fields — optional ones the body omits are dropped —
+  // and keep the offering's identity (id, createdAt).
+  for (const key of ['unit', 'durationMin', 'description']) delete offering[key];
+  Object.assign(offering, fields);
+  if (typeof body.active === 'boolean') offering.active = body.active;
+  saveStore();
+  sendJson(res, 200, offering);
+}
+
+function handleDeleteOffering(practitioner, offeringId, res) {
+  const index = practitioner.offerings.findIndex((o) => o.id === offeringId);
+  if (index === -1) {
+    notFound(res, 'error_offering_not_found', 'No such offering for this practitioner.');
+    return;
+  }
+  practitioner.offerings.splice(index, 1);
+  saveStore();
+  sendJson(res, 200, { ok: true });
+}
+
+// --- Practice logo (v2.1) ---------------------------------------------------
+
+function logoFilePath(practitioner) {
+  return practitioner.logo
+    ? path.join(LOGOS_DIR, practitioner.id + '.' + practitioner.logo.ext)
+    : null;
+}
+
+function handlePutLogo(practitioner, body, res) {
+  const ext = body ? LOGO_EXT_BY_CONTENT_TYPE[body.contentType] : undefined;
+  if (!ext) {
+    sendJson(res, 400, { status: 'error', errorCode: 'error_logo_type' });
+    return;
+  }
+  const buffer =
+    typeof body.imageBase64 === 'string' ? decodeBase64Image(body.imageBase64) : null;
+  if (!buffer) {
+    sendJson(res, 400, { status: 'error', errorCode: 'error_logo_type' });
+    return;
+  }
+  if (buffer.length > MAX_LOGO_BYTES) {
+    sendJson(res, 413, { status: 'error', errorCode: 'error_logo_too_large' });
+    return;
+  }
+  fs.mkdirSync(LOGOS_DIR, { recursive: true });
+  const oldPath = logoFilePath(practitioner);
+  const newPath = path.join(LOGOS_DIR, practitioner.id + '.' + ext);
+  if (oldPath && oldPath !== newPath) {
+    try {
+      fs.unlinkSync(oldPath);
+    } catch (_) {
+      // Old logo file already gone — nothing to clean up.
+    }
+  }
+  fs.writeFileSync(newPath, buffer);
+  practitioner.logo = { ext, updatedAt: new Date().toISOString() };
+  saveStore();
+  sendJson(res, 200, publicPractitioner(practitioner));
+}
+
+function handleDeleteLogo(practitioner, res) {
+  const filePath = logoFilePath(practitioner);
+  if (filePath) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch (_) {
+      // Logo file already gone — clearing the field is enough.
+    }
+  }
+  practitioner.logo = null;
+  saveStore();
+  sendJson(res, 200, publicPractitioner(practitioner));
+}
+
+// Public: the client web page shows the logo without any credential.
+function handleGetPublicLogo(practitionerId, res) {
+  const practitioner = store.practitioners.find((p) => p.id === practitionerId);
+  const filePath = practitioner ? logoFilePath(practitioner) : null;
+  if (!practitioner || !filePath || !fs.existsSync(filePath)) {
+    sendJson(res, 404, { status: 'error', errorCode: 'error_logo_not_found' });
+    return;
+  }
+  const bytes = fs.readFileSync(filePath);
+  res.writeHead(200, {
+    'Content-Type': LOGO_CONTENT_TYPE_BY_EXT[practitioner.logo.ext] || 'application/octet-stream',
+    'Content-Length': bytes.length,
+    'Cache-Control': 'public, max-age=300',
+  });
+  res.end(bytes);
+}
+
 // --- Client-facing (token-keyed) handlers ---------------------------------
 
 function handleGetPublicClient(token, res) {
@@ -817,6 +1038,10 @@ function handleGetPublicClient(token, res) {
       practitionerName: practitioner.practitionerName,
       accent: practitioner.accent,
       bookingLink: practitioner.bookingLink,
+      logoUrl: practitioner.logo
+        ? '/api/practitioners/' + practitioner.id + '/logo'
+        : null,
+      offerings: (practitioner.offerings || []).filter((o) => o.active),
     },
     client: { firstName: client.firstName },
     plan: client.plan || null,
@@ -978,6 +1203,31 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 200, publicPractitioner(practitioner));
         return;
       }
+      if (pathname === '/api/me/offerings' && req.method === 'GET') {
+        sendJson(res, 200, practitioner.offerings);
+        return;
+      }
+      if (pathname === '/api/me/offerings' && req.method === 'POST') {
+        handleCreateOffering(practitioner, body, res);
+        return;
+      }
+      const offeringMatch = pathname.match(/^\/api\/me\/offerings\/([^/]+)$/);
+      if (offeringMatch && req.method === 'PUT') {
+        handleUpdateOffering(practitioner, decodeURIComponent(offeringMatch[1]), body, res);
+        return;
+      }
+      if (offeringMatch && req.method === 'DELETE') {
+        handleDeleteOffering(practitioner, decodeURIComponent(offeringMatch[1]), res);
+        return;
+      }
+      if (pathname === '/api/me/logo' && req.method === 'PUT') {
+        handlePutLogo(practitioner, body, res);
+        return;
+      }
+      if (pathname === '/api/me/logo' && req.method === 'DELETE') {
+        handleDeleteLogo(practitioner, res);
+        return;
+      }
       if (pathname === '/api/me/clients' && req.method === 'GET') {
         sendJson(res, 200, practitioner.clients.map(clientSummary));
         return;
@@ -1020,6 +1270,13 @@ const server = http.createServer(async (req, res) => {
       }
 
       sendJson(res, 404, { status: 'error', errorCode: 'error_not_found' });
+      return;
+    }
+
+    // Public practitioner logo (the client page displays it; no auth).
+    const publicLogoMatch = pathname.match(/^\/api\/practitioners\/([^/]+)\/logo$/);
+    if (publicLogoMatch && req.method === 'GET') {
+      handleGetPublicLogo(decodeURIComponent(publicLogoMatch[1]), res);
       return;
     }
 

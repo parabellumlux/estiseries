@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -85,6 +86,18 @@ abstract class EstiSeriesApi {
   Future<void> updatePlan(String clientId, Map<String, dynamic> plan);
 
   Future<void> deleteClient(String clientId);
+
+  Future<List<Offering>> getOfferings();
+
+  Future<Offering> createOffering(Offering offering);
+
+  Future<Offering> updateOffering(Offering offering);
+
+  Future<void> deleteOffering(String offeringId);
+
+  Future<PractitionerProfile> uploadLogo(Uint8List bytes, String contentType);
+
+  Future<PractitionerProfile> deleteLogo();
 }
 
 /// Contract-v2 API client over `dart:io` [HttpClient] (no HTTP package).
@@ -198,6 +211,53 @@ class HttpApiClient implements EstiSeriesApi {
   Future<void> deleteClient(String clientId) async {
     await _request('DELETE', '/api/me/clients/$clientId');
   }
+
+  @override
+  Future<List<Offering>> getOfferings() async {
+    final decoded = await _request('GET', '/api/me/offerings');
+    return (decoded as List<dynamic>)
+        .map((dynamic e) =>
+            Offering.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
+  }
+
+  @override
+  Future<Offering> createOffering(Offering offering) async =>
+      Offering.fromJson(_asMap(await _request(
+        'POST',
+        '/api/me/offerings',
+        body: offering.toJson(),
+      )));
+
+  @override
+  Future<Offering> updateOffering(Offering offering) async =>
+      Offering.fromJson(_asMap(await _request(
+        'PUT',
+        '/api/me/offerings/${offering.id}',
+        body: offering.toJson(),
+      )));
+
+  @override
+  Future<void> deleteOffering(String offeringId) async {
+    await _request('DELETE', '/api/me/offerings/$offeringId');
+  }
+
+  @override
+  Future<PractitionerProfile> uploadLogo(
+          Uint8List bytes, String contentType) async =>
+      PractitionerProfile.fromJson(_asMap(await _request(
+        'PUT',
+        '/api/me/logo',
+        body: {
+          'imageBase64': base64Encode(bytes),
+          'contentType': contentType,
+        },
+      )));
+
+  @override
+  Future<PractitionerProfile> deleteLogo() async =>
+      PractitionerProfile.fromJson(
+          _asMap(await _request('DELETE', '/api/me/logo')));
 
   Future<dynamic> _request(
     String method,

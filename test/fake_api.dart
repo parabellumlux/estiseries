@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:skinseries/models.dart';
 import 'package:skinseries/services/api_client.dart';
 
@@ -137,6 +139,52 @@ class FakeApi implements EstiSeriesApi {
     _details.remove(clientId);
     _clients = _clients.where((c) => c.id != clientId).toList();
   }
+
+  final List<Offering> _offerings = [];
+  int _offeringSeq = 0;
+
+  @override
+  Future<List<Offering>> getOfferings() async => List.of(_offerings);
+
+  @override
+  Future<Offering> createOffering(Offering offering) async {
+    final created = Offering(
+      id: 'offering-${++_offeringSeq}',
+      kind: offering.kind,
+      name: offering.name,
+      price: offering.price,
+      unit: offering.unit,
+      durationMin: offering.durationMin,
+      description: offering.description,
+      active: offering.active,
+      createdAt: '2026-10-20T00:00:00.000Z',
+    );
+    _offerings.add(created);
+    return created;
+  }
+
+  @override
+  Future<Offering> updateOffering(Offering offering) async {
+    final index = _offerings.indexWhere((o) => o.id == offering.id);
+    if (index == -1) {
+      throw const ApiException(404, 'error_offering_not_found');
+    }
+    _offerings[index] = offering;
+    return offering;
+  }
+
+  @override
+  Future<void> deleteOffering(String offeringId) async {
+    _offerings.removeWhere((o) => o.id == offeringId);
+  }
+
+  @override
+  Future<PractitionerProfile> uploadLogo(
+          Uint8List bytes, String contentType) async =>
+      _profile.copyWith(logoUrl: '/api/practitioners/${_profile.id}/logo');
+
+  @override
+  Future<PractitionerProfile> deleteLogo() async => _profile;
 }
 
 /// A scan record in contract-v2 shape, for tests.

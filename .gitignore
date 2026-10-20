@@ -53,3 +53,6 @@ backend/raw-sample.json
 
 # Live data store — contains practitioner/client access tokens, never commit
 backend/data.json
+
+# Uploaded practice logos (v2.1) — user content, never commit
+backend/logos/

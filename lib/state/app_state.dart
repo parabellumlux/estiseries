@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../data/catalog.dart';
@@ -15,6 +17,7 @@ class PlanDraft {
     required this.regimenAm,
     required this.regimenPm,
     required this.productIds,
+    this.service,
   });
 
   String templateId;
@@ -30,6 +33,10 @@ class PlanDraft {
   String regimenAm;
   String regimenPm;
   final Set<String> productIds;
+
+  /// The series' headline treatment snapshot (contract v2.1), chosen in
+  /// the Plan Builder from the practitioner's active services.
+  PlanService? service;
 }
 
 /// Single `ChangeNotifier` holding the signed-in practitioner, their
@@ -76,6 +83,7 @@ class AppState extends ChangeNotifier {
       api.token = stored;
       profile = await api.getMe();
       await _fetchClients();
+      await _fetchOfferings();
       if (selectedClientId == null && clients.isNotEmpty) {
         await selectClient(clients.first.id);
       }
@@ -161,6 +169,7 @@ class AppState extends ChangeNotifier {
     selectedDetail = null;
     sharedPlan = null;
     await _fetchClients();
+    await _fetchOfferings();
     if (clients.isNotEmpty) {
       await selectClient(clients.first.id);
     }
@@ -177,6 +186,8 @@ class AppState extends ChangeNotifier {
     clientDetailOpen = false;
     authMessage = null;
     profileMessage = null;
+    offerings = [];
+    offeringsMessage = null;
     draft = _defaultDraft();
     draftVersion++;
     tabIndex = 0;
@@ -224,6 +235,121 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  // ---- Offerings + logo (contract v2.1) -------------------------------------
+
+  List<Offering> offerings = [];
+  String? offeringsMessage;
+
+  List<Offering> get activeOfferings =>
+      offerings.where((o) => o.active).toList();
+
+  List<Offering> get activeServices =>
+      activeOfferings.where((o) => o.isService).toList();
+
+  List<Offering> get activeProducts =>
+      activeOfferings.where((o) => o.isProduct).toList();
+
+  /// The products the Plan Builder offers: the practitioner's own active
+  /// products when she has any, else the built-in starter catalog.
+  List<Product> get planProducts => activeProducts.isNotEmpty
+      ? [
+          for (final o in activeProducts)
+            Product(id: o.id, name: o.name, price: o.price),
+        ]
+      : products;
+
+  Future<void> _fetchOfferings() async {
+    try {
+      offerings = await api.getOfferings();
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) rethrow;
+      offeringsMessage =
+          e.message ?? 'Could not load your services and products.';
+    }
+  }
+
+  Future<void> refreshOfferings() async {
+    try {
+      await _fetchOfferings();
+    } on ApiException {
+      await _expireSession();
+      return;
+    }
+    notifyListeners();
+  }
+
+  Future<bool> createOffering(Offering offering) => _mutateOffering(
+        () => api.createOffering(offering),
+        'Could not add that item.',
+      );
+
+  Future<bool> updateOffering(Offering offering) => _mutateOffering(
+        () => api.updateOffering(offering),
+        'Could not save that item.',
+      );
+
+  Future<bool> _mutateOffering(
+    Future<Offering> Function() action,
+    String fallback,
+  ) async {
+    try {
+      await action();
+      await _fetchOfferings();
+      offeringsMessage = null;
+      notifyListeners();
+      return true;
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) await _expireSession();
+      offeringsMessage = e.message ?? fallback;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> deleteOffering(String offeringId) async {
+    try {
+      await api.deleteOffering(offeringId);
+      offerings = offerings.where((o) => o.id != offeringId).toList();
+      offeringsMessage = null;
+      notifyListeners();
+      return true;
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) await _expireSession();
+      offeringsMessage = e.message ?? 'Could not delete that item.';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> uploadLogo(Uint8List bytes, String contentType) async {
+    try {
+      profile = await api.uploadLogo(bytes, contentType);
+      profileMessage = 'Logo saved.';
+      notifyListeners();
+      return true;
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) await _expireSession();
+      profileMessage = e.message ?? 'Could not save your logo.';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<void> removeLogo() async {
+    try {
+      profile = await api.deleteLogo();
+      profileMessage = 'Logo removed.';
+      notifyListeners();
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) {
+        await _expireSession();
+      } else {
+        profileMessage = e.message ?? 'Could not remove your logo.';
+        notifyListeners();
+      }
+    }
+  }
+
   Future<void> _expireSession() async {
     await tokenStore.clear();
     api.token = null;
@@ -231,6 +357,7 @@ class AppState extends ChangeNotifier {
     clients = [];
     selectedClientId = null;
     selectedDetail = null;
+    offerings = [];
     authMessage =
         'Your saved sign-in has expired. Create your practice or sign in again.';
     notifyListeners();
@@ -400,9 +527,9 @@ class AppState extends ChangeNotifier {
       final template = templateByName(plan.seriesName) ?? kSeriesTemplates.last;
       final productIds = <String>{...plan.legacyProductIds};
       for (final product in plan.products) {
-        for (final catalogProduct in kProducts) {
-          if (catalogProduct.name == product.name) {
-            productIds.add(catalogProduct.id);
+        for (final choice in [...planProducts, ...kProducts]) {
+          if (choice.name == product.name) {
+            productIds.add(choice.id);
           }
         }
       }
@@ -415,6 +542,7 @@ class AppState extends ChangeNotifier {
         regimenAm: plan.regimenAm,
         regimenPm: plan.regimenPm,
         productIds: productIds,
+        service: plan.service,
       );
     }
     sharedPlan = null;
@@ -463,6 +591,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setDraftService(PlanService? service) {
+    draft.service = service;
+    notifyListeners();
+  }
+
   Map<String, dynamic> buildPlanJson() => {
         'seriesName': draft.seriesName,
         'sessions': draft.sessions,
@@ -472,10 +605,11 @@ class AppState extends ChangeNotifier {
         ],
         'regimen': {'am': draft.regimenAm, 'pm': draft.regimenPm},
         'products': [
-          for (final product in kProducts)
+          for (final product in planProducts)
             if (draft.productIds.contains(product.id))
               {'name': product.name, 'price': product.price},
         ],
+        if (draft.service != null) 'service': draft.service!.toJson(),
       };
 
   /// Saves the draft to the selected client via

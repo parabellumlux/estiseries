@@ -98,6 +98,9 @@ class _PlanScreenState extends State<PlanScreen> {
         state.templates.firstWhere((t) => t.id == draft.templateId);
     final clientName =
         state.selectedDetail?.firstName ?? state.selectedSummary?.firstName ?? '';
+    final currentService = draft.service;
+    final serviceOnMenu = currentService != null &&
+        state.activeServices.any((s) => s.name == currentService.name);
 
     return ScreenScaffold(
       title: 'Plan builder',
@@ -257,9 +260,75 @@ class _PlanScreenState extends State<PlanScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Text('Series treatment (optional)',
+                        style: theme.textTheme.titleMedium),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: currentService?.name,
+                      decoration:
+                          const InputDecoration(border: OutlineInputBorder()),
+                      items: [
+                        const DropdownMenuItem<String>(
+                          value: null,
+                          child: Text('None'),
+                        ),
+                        for (final service in state.activeServices)
+                          DropdownMenuItem<String>(
+                            value: service.name,
+                            child: Text(
+                              '${service.name} — ${_price(service.price)}'
+                              '${service.unit == null ? '' : ' ${service.unit}'}',
+                            ),
+                          ),
+                        if (currentService != null && !serviceOnMenu)
+                          DropdownMenuItem<String>(
+                            value: currentService.name,
+                            child: Text(
+                              '${currentService.name} — '
+                              '${_price(currentService.price)}'
+                              '${currentService.unit == null ? '' : ' ${currentService.unit}'}'
+                              ' (not on your menu)',
+                            ),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) {
+                          state.setDraftService(null);
+                          return;
+                        }
+                        for (final service in state.activeServices) {
+                          if (service.name == value) {
+                            state.setDraftService(PlanService(
+                              name: service.name,
+                              price: service.price,
+                              unit: service.unit,
+                            ));
+                            return;
+                          }
+                        }
+                      },
+                    ),
+                    if (state.activeServices.isEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Add your services in Setup to offer one here.',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text('Retail products', style: theme.textTheme.titleMedium),
                     const SizedBox(height: 8),
-                    for (final product in state.products)
+                    for (final product in state.planProducts)
                       CheckboxListTile(
                         contentPadding: EdgeInsets.zero,
                         controlAffinity: ListTileControlAffinity.leading,
@@ -268,13 +337,20 @@ class _PlanScreenState extends State<PlanScreen> {
                         value: draft.productIds.contains(product.id),
                         onChanged: (_) => state.toggleProduct(product.id),
                       ),
+                    if (state.activeProducts.isEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'These are starter products — add your own in Setup.',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ],
                     const Divider(),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text('Total', style: theme.textTheme.titleMedium),
                         Text(
-                          _price(_total(state.products, draft.productIds)),
+                          _price(_total(state.planProducts, draft.productIds)),
                           style: theme.textTheme.titleMedium
                               ?.copyWith(fontWeight: FontWeight.w700),
                         ),
@@ -339,6 +415,12 @@ class _ClientPreviewCard extends StatelessWidget {
         title: Text('Client preview', style: theme.textTheme.titleMedium),
         children: [
           _row('Series', plan.seriesName),
+          if (plan.service != null)
+            _row(
+              'Series treatment',
+              '${plan.service!.name} — ${_price(plan.service!.price)}'
+              '${plan.service!.unit == null ? '' : ' ${plan.service!.unit}'}',
+            ),
           _row('Sessions', '${plan.sessions}'),
           for (final focus in plan.focus)
             _row(

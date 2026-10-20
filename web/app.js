@@ -175,6 +175,17 @@
     var practiceName = practitioner.practiceName || "EstiSeries";
     el("practiceName").textContent = practiceName;
     el("practiceMark").textContent = initialsFor(practiceName);
+    var logoImg = el("practiceLogo");
+    if (practitioner.logoUrl) {
+      logoImg.src = practitioner.logoUrl;
+      logoImg.alt = practiceName + " logo";
+      logoImg.hidden = false;
+      el("practiceMark").hidden = true;
+    } else {
+      logoImg.hidden = true;
+      logoImg.removeAttribute("src");
+      el("practiceMark").hidden = false;
+    }
     document.title = "Skin check-in — " + practiceName;
     if (practitioner.accent) {
       document.documentElement.style.setProperty("--terra", practitioner.accent);
@@ -195,6 +206,8 @@
     el("tryCard").hidden = false;
     el("practiceName").textContent = "EstiSeries";
     el("practiceMark").textContent = "ES";
+    el("practiceLogo").hidden = true;
+    el("practiceMark").hidden = false;
     document.title = "Skin check-in — EstiSeries";
     showStep(0);
     el("progressWrap").hidden = true;
@@ -208,6 +221,8 @@
     el("tryCard").hidden = false;
     el("practiceName").textContent = "EstiSeries";
     el("practiceMark").textContent = "ES";
+    el("practiceLogo").hidden = true;
+    el("practiceMark").hidden = false;
     document.title = "Skin check-in — EstiSeries";
     showStep(0);
     el("progressWrap").hidden = true;
@@ -234,7 +249,49 @@
       ". Your scans stay together on one series timeline, so you can see how your skin changes across your visits.";
 
     renderHero();
+    renderServices();
     showStep(0);
+  }
+
+  // ---- Services & prices menu (the practitioner's own offerings) ----
+  function renderServices() {
+    var offerings = (practitioner && practitioner.offerings) || [];
+    var card = el("servicesCard");
+    card.hidden = !offerings.length;
+    if (!offerings.length) return;
+    var groups = el("servicesGroups");
+    groups.innerHTML = "";
+    [
+      { kind: "service", label: "Services" },
+      { kind: "product", label: "Products" }
+    ].forEach(function (group) {
+      var items = offerings.filter(function (o) {
+        return o && o.kind === group.kind;
+      });
+      if (!items.length) return;
+      var heading = document.createElement("h3");
+      heading.className = "services-group-title";
+      heading.textContent = group.label;
+      groups.appendChild(heading);
+      var list = document.createElement("ul");
+      list.className = "product-list";
+      items.forEach(function (o) {
+        var item = document.createElement("li");
+        var nameEl = document.createElement("span");
+        nameEl.textContent = o.name || "";
+        var priceEl = document.createElement("span");
+        var text = formatPrice(o.price);
+        if (o.unit) text += " " + o.unit;
+        if (group.kind === "service" && o.durationMin) {
+          text += " · " + o.durationMin + " min";
+        }
+        priceEl.textContent = text;
+        item.appendChild(nameEl);
+        item.appendChild(priceEl);
+        list.appendChild(item);
+      });
+      groups.appendChild(list);
+    });
   }
 
   // ---- Welcome hero: the client's own series, up front ----
@@ -1132,7 +1189,7 @@
 
     // Plan card, rendered from the plan JSON when present.
     var hasPlan = !!plan && (
-      plan.seriesName || plan.focus || plan.regimen || plan.products
+      plan.seriesName || plan.focus || plan.regimen || plan.products || plan.service
     );
     el("planCard").hidden = !hasPlan;
     if (hasPlan) {
@@ -1140,6 +1197,15 @@
         ? plan.seriesName + (plan.sessions ? " — " + plan.sessions + " sessions" : "")
         : "";
       el("planSeries").hidden = !plan.seriesName;
+
+      var planService = plan.service;
+      el("planService").hidden = !planService;
+      if (planService) {
+        el("planService").textContent =
+          "Series treatment: " + (planService.name || "") + " — " +
+          formatPrice(planService.price) +
+          (planService.unit ? " " + planService.unit : "");
+      }
 
       var focus = plan.focus || [];
       el("planFocusSection").hidden = !focus.length;

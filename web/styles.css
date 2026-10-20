@@ -57,6 +57,16 @@ body {
   font-size: 19px; font-weight: bold; letter-spacing: 0.08em;
   background: rgba(255, 255, 255, 0.12);
 }
+.practice-logo {
+  display: block;
+  margin: 0 auto 10px;
+  max-height: 64px;
+  max-width: 260px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.94);
+  border-radius: 10px;
+  padding: 6px 12px;
+}
 .practice-name {
   margin: 0;
   font-size: 32px;
@@ -403,6 +413,17 @@ body {
 .product-list li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .product-list li:last-child { border-bottom: none; }
 .product-total { font-weight: bold; text-align: right; font-family: var(--ui); font-size: 17px; }
+.plan-service { font-size: 18px; font-weight: bold; color: var(--terra-dark); margin: 8px 0 0; }
+.services-card {
+  border: 1px solid var(--line); border-radius: 16px;
+  padding: 20px; margin-top: 24px; background: var(--cream);
+  border-left: 8px solid var(--sage); text-align: left;
+}
+.services-title { margin: 0; font-size: 24px; }
+.services-group-title {
+  margin: 16px 0 2px; font-family: var(--ui); font-size: 14px;
+  text-transform: uppercase; letter-spacing: 0.07em; color: var(--terra-dark);
+}
 
 .site-footer { text-align: center; color: var(--muted); font-size: 15px; padding: 6px 16px 30px; }
 

@@ -4,11 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Skin check-in — EstiSeries</title>
-<link rel="stylesheet" href="styles.css?v=20261020-mirror">
+<link rel="stylesheet" href="styles.css?v=20261020-offerings">
 </head>
 <body>
 <header class="site-header">
   <div class="header-inner">
+    <img class="practice-logo" id="practiceLogo" alt="" hidden>
     <p class="practice-mark" id="practiceMark" aria-hidden="true">ES</p>
     <p class="practice-name" id="practiceName">EstiSeries</p>
     <p class="practice-tagline" id="practiceTagline">Skin care, measured.</p>
@@ -42,6 +43,11 @@
         <p class="series-preview-note">Real progress, shown as it is — a couple of areas may dip slightly along the way, and you'll see those too. No filters, no cherry-picking.</p>
       </div>
       <p class="series-preview-note" id="noScansNote" hidden>No scans yet — your first scan will start your series timeline.</p>
+
+      <div class="services-card" id="servicesCard" hidden>
+        <h2 class="services-title">Services &amp; prices</h2>
+        <div id="servicesGroups"></div>
+      </div>
 
       <button type="button" class="btn btn-primary btn-block" id="startBtn">Start my check-in</button>
       <ul class="hero-points">
@@ -262,6 +268,7 @@
     <div class="plan-card" id="planCard" hidden>
       <h3>Your plan from <span id="planPractitionerName">your practitioner</span></h3>
       <p class="plan-series" id="planSeries"></p>
+      <p class="plan-service" id="planService" hidden></p>
       <div id="planFocusSection">
         <h4>Focus notes</h4>
         <div id="planFocus"></div>
@@ -293,6 +300,6 @@
   <p>EstiSeries</p>
 </footer>
 
-<script src="app.js"></script>
+<script src="app.js?v=20261020-offerings"></script>
 </body>
 </html>
