@@ -62,9 +62,16 @@ ThemeData _buildTheme(Color accent) {
     onSurfaceVariant: const Color(0xFF5C5248),
     outline: const Color(0xFFC9BEB1),
   );
+  final textTheme = ThemeData.light().textTheme;
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
+    textTheme: textTheme.copyWith(
+      // UI/UX audit F1: bodySmall carries real content (brief disclaimers,
+      // plan notes, status messages) — floor it at 13.5sp, not the 12sp
+      // M3 default, for the practitioner audience.
+      bodySmall: textTheme.bodySmall?.copyWith(fontSize: 13.5),
+    ),
     scaffoldBackgroundColor: kCream,
     appBarTheme: const AppBarTheme(
       backgroundColor: kCream,

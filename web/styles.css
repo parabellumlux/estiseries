@@ -145,6 +145,8 @@ body {
 .arc {
   display: flex; align-items: flex-start;
   margin: 18px 2px 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
 }
 .arc-stop { text-align: center; flex: none; width: 92px; }
 .arc-link {
@@ -394,7 +396,7 @@ body {
 .delta-down { color: var(--down-text); font-weight: bold; }
 .delta-flat { color: var(--muted); }
 .focus-tag {
-  font-family: var(--ui); font-size: 11px; font-weight: bold;
+  font-family: var(--ui); font-size: 12.5px; font-weight: bold;
   background: var(--down-bg); color: var(--terra-dark);
   border-radius: 999px; padding: 3px 8px; margin-left: 6px; vertical-align: middle;
   white-space: nowrap;
@@ -412,6 +414,7 @@ body {
 .product-list { list-style: none; margin: 6px 0; padding: 0; }
 .product-list li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .product-list li:last-child { border-bottom: none; }
+.product-list li > span:last-child { flex: none; text-align: right; }
 .product-total { font-weight: bold; text-align: right; font-family: var(--ui); font-size: 17px; }
 .plan-service { font-size: 18px; font-weight: bold; color: var(--terra-dark); margin: 8px 0 0; }
 .services-card {
@@ -486,9 +489,13 @@ label.btn { cursor: pointer; }
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
   pointer-events: none;
+  container-type: size;
 }
 .face-guide-oval {
-  width: 72%; aspect-ratio: 4 / 5;
+  width: 72%;
+  /* Cap by stage height too: on 4:3 / 16:9 streams a width-only 72% oval
+     (4:5) is taller than the stage and the ring clips top/bottom. */
+  width: min(72%, 74cqh); aspect-ratio: 4 / 5;
   border-radius: 50%;
   border: 4px solid #C63E34;
   box-shadow: 0 0 0 999px rgba(36, 27, 20, 0.10), inset 0 0 0 999px rgba(198, 62, 52, 0.06);
@@ -500,7 +507,7 @@ label.btn { cursor: pointer; }
 }
 .face-guide-status {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
-  margin: 0; white-space: nowrap;
+  margin: 0; max-width: calc(100% - 16px); text-align: center; line-height: 1.3;
   font-family: var(--ui); font-size: 13px; font-weight: bold;
   color: #fff; background: rgba(156, 55, 45, 0.92);
   border-radius: 999px; padding: 5px 12px;
@@ -531,7 +538,7 @@ label.btn { cursor: pointer; }
 .shutter-btn:disabled .shutter-core { opacity: 0.55; transform: none; }
 .shutter-btn:focus-visible { outline: 3px solid var(--sage); outline-offset: 3px; border-radius: 999px; }
 .shutter-caption {
-  font-size: 12px; font-weight: bold; letter-spacing: 0.04em;
+  font-size: 13px; font-weight: bold; letter-spacing: 0.04em;
   color: #fff; background: rgba(36, 27, 20, 0.72);
   border-radius: 999px; padding: 3px 10px; white-space: nowrap;
 }
@@ -552,7 +559,7 @@ label.btn { cursor: pointer; }
   font-family: var(--ui); font-weight: 700; font-size: 24px; color: var(--ink);
   box-shadow: 0 1px 5px rgba(36, 27, 20, 0.20);
 }
-.zone-circle-label { font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); text-align: center; line-height: 1.15; }
+.zone-circle-label { font-size: 12.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); text-align: center; line-height: 1.15; }
 @media (max-width: 380px) {
   .zone-rail { flex-basis: 64px; gap: 10px; }
   .zone-circle-badge { width: 54px; height: 54px; font-size: 20px; border-width: 3px; }
@@ -573,3 +580,32 @@ label.btn { cursor: pointer; }
 }
 #step-signin { text-align: left; }
 .auth-wrap { max-width: 520px; margin: 48px auto; padding: 0 16px 40px; text-align: left; }
+
+/* ---------- UI/UX audit fix pass (2026-10-20) ---------- */
+/* W3: arc rings stay inside their 80px stops at <=420px — the 124px
+   .score-ring bump in the small-screen block above is the results hero. */
+@media (max-width: 420px) {
+  .arc-stop .score-ring-sm { width: 68px; height: 68px; }
+  .arc-stop .score-ring-sm .score-ring-value { width: 50px; height: 50px; font-size: 20px; }
+}
+/* W4: on phones the results photo takes the full card width and the zone
+   rail becomes a horizontal wrapping row under it (was a 527px side rail
+   squeezing the photo to ~200px). */
+@media (max-width: 480px) {
+  .report-photo-wrap { flex-direction: column; }
+  .report-photo-stage { width: 100%; }
+  .zone-rail {
+    flex: none; flex-direction: row; flex-wrap: wrap;
+    justify-content: center; gap: 10px 14px; padding-top: 10px; width: 100%;
+  }
+}
+/* W6: landscape / short-viewport compact mode — header shrinks, the
+   capture stage is capped and centered so the shutter stays on-screen. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .site-header { padding: 10px 16px 8px; }
+  .practice-tagline { display: none; }
+  .practice-logo { max-height: 40px; margin-bottom: 4px; }
+  .practice-mark { width: 38px; height: 38px; margin-bottom: 4px; font-size: 15px; }
+  .practice-name { font-size: 24px; }
+  .camera-stage { max-width: 440px; margin-left: auto; margin-right: auto; }
+}

@@ -96,8 +96,9 @@ class _PlanScreenState extends State<PlanScreen> {
     final draft = state.draft;
     final template =
         state.templates.firstWhere((t) => t.id == draft.templateId);
-    final clientName =
-        state.selectedDetail?.firstName ?? state.selectedSummary?.firstName ?? '';
+    final clientName = state.selectedDetail?.firstName ??
+        state.selectedSummary?.firstName ??
+        '';
     final currentService = draft.service;
     final serviceOnMenu = currentService != null &&
         state.activeServices.any((s) => s.name == currentService.name);
@@ -265,6 +266,7 @@ class _PlanScreenState extends State<PlanScreen> {
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
                       value: currentService?.name,
+                      isExpanded: true,
                       decoration:
                           const InputDecoration(border: OutlineInputBorder()),
                       items: [
@@ -278,6 +280,8 @@ class _PlanScreenState extends State<PlanScreen> {
                             child: Text(
                               '${service.name} — ${_price(service.price)}'
                               '${service.unit == null ? '' : ' ${service.unit}'}',
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
                             ),
                           ),
                         if (currentService != null && !serviceOnMenu)
@@ -288,6 +292,8 @@ class _PlanScreenState extends State<PlanScreen> {
                               '${_price(currentService.price)}'
                               '${currentService.unit == null ? '' : ' ${currentService.unit}'}'
                               ' (not on your menu)',
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
                             ),
                           ),
                       ],
@@ -386,8 +392,9 @@ class _PlanScreenState extends State<PlanScreen> {
     final state = widget.state;
     final ok = await state.savePlan();
     if (!context.mounted) return;
-    final name =
-        state.selectedDetail?.firstName ?? state.selectedSummary?.firstName ?? '';
+    final name = state.selectedDetail?.firstName ??
+        state.selectedSummary?.firstName ??
+        '';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -419,7 +426,7 @@ class _ClientPreviewCard extends StatelessWidget {
             _row(
               'Series treatment',
               '${plan.service!.name} — ${_price(plan.service!.price)}'
-              '${plan.service!.unit == null ? '' : ' ${plan.service!.unit}'}',
+                  '${plan.service!.unit == null ? '' : ' ${plan.service!.unit}'}',
             ),
           _row('Sessions', '${plan.sessions}'),
           for (final focus in plan.focus)

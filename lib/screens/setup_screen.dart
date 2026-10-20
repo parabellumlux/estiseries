@@ -219,8 +219,7 @@ class _AuthFormsState extends State<_AuthForms> {
                   ),
                   const SizedBox(height: 8),
                   TextButton(
-                    onPressed: () =>
-                        setState(() => _showForgot = !_showForgot),
+                    onPressed: () => setState(() => _showForgot = !_showForgot),
                     child: const Text('Forgot password?'),
                   ),
                   if (_showForgot) ...[
@@ -771,109 +770,124 @@ class _OfferingEditorState extends State<_OfferingEditor> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isNew = widget.existing == null;
-    return AlertDialog(
-      title: Text(isNew ? 'Add to your menu' : 'Edit item'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            DropdownButtonFormField<String>(
-              value: _kind,
-              decoration: const InputDecoration(
-                labelText: 'Type',
-                border: OutlineInputBorder(),
-              ),
-              items: const [
-                DropdownMenuItem(value: 'service', child: Text('Service')),
-                DropdownMenuItem(value: 'product', child: Text('Product')),
-              ],
-              onChanged: (value) =>
-                  setState(() => _kind = value ?? _kind),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _name,
-              decoration: const InputDecoration(
-                labelText: 'Name',
-                hintText: 'RF Microneedling',
-                border: OutlineInputBorder(),
+    // UI/UX audit F2: full-screen editor — the centered AlertDialog
+    // crammed 6 fields + switch into ~40% of the screen with the keyboard
+    // open. Same form, same save/delete logic, roomier container.
+    return Dialog.fullscreen(
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(isNew ? 'Add to your menu' : 'Edit item'),
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: _saving ? null : () => Navigator.pop(context),
+          ),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilledButton(
+                onPressed: _saving ? null : _save,
+                child: const Text('Save'),
               ),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _price,
-              decoration: const InputDecoration(
-                labelText: 'Price',
-                prefixText: '\$ ',
-                border: OutlineInputBorder(),
-              ),
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _unit,
-              decoration: const InputDecoration(
-                labelText: 'Unit (optional)',
-                hintText: 'per session, per unit…',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            if (_kind == 'service') ...[
-              const SizedBox(height: 12),
-              TextField(
-                controller: _duration,
-                decoration: const InputDecoration(
-                  labelText: 'Duration (minutes, optional)',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-              ),
-            ],
-            const SizedBox(height: 12),
-            TextField(
-              controller: _description,
-              minLines: 1,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Description (optional)',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Active'),
-              subtitle: const Text('Clients can see active items'),
-              value: _active,
-              onChanged: (value) => setState(() => _active = value),
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                _error!,
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: theme.colorScheme.error),
-              ),
-            ],
           ],
         ),
-      ),
-      actions: [
-        if (!isNew)
-          TextButton(
-            onPressed: _saving ? null : _delete,
-            child: const Text('Delete'),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DropdownButtonFormField<String>(
+                value: _kind,
+                decoration: const InputDecoration(
+                  labelText: 'Type',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'service', child: Text('Service')),
+                  DropdownMenuItem(value: 'product', child: Text('Product')),
+                ],
+                onChanged: (value) => setState(() => _kind = value ?? _kind),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _name,
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  hintText: 'RF Microneedling',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _price,
+                decoration: const InputDecoration(
+                  labelText: 'Price',
+                  prefixText: '\$ ',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _unit,
+                decoration: const InputDecoration(
+                  labelText: 'Unit (optional)',
+                  hintText: 'per session, per unit…',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              if (_kind == 'service') ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _duration,
+                  decoration: const InputDecoration(
+                    labelText: 'Duration (minutes, optional)',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+              ],
+              const SizedBox(height: 12),
+              TextField(
+                controller: _description,
+                minLines: 1,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Description (optional)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Active'),
+                subtitle: const Text('Clients can see active items'),
+                value: _active,
+                onChanged: (value) => setState(() => _active = value),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  _error!,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.error),
+                ),
+              ],
+            ],
           ),
-        TextButton(
-          onPressed: _saving ? null : () => Navigator.pop(context),
-          child: const Text('Cancel'),
         ),
-        FilledButton(
-          onPressed: _saving ? null : _save,
-          child: const Text('Save'),
-        ),
-      ],
+        bottomNavigationBar: isNew
+            ? null
+            : SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: TextButton(
+                    onPressed: _saving ? null : _delete,
+                    child: const Text('Delete'),
+                  ),
+                ),
+              ),
+      ),
     );
   }
 
