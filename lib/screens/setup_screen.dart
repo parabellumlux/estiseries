@@ -62,6 +62,13 @@ class _AuthFormsState extends State<_AuthForms> {
   final _bookingLink = TextEditingController();
   final _login = TextEditingController();
   final _password = TextEditingController();
+  final _email = TextEditingController();
+  final _newPassword = TextEditingController();
+  final _token = TextEditingController();
+  final _forgotEmail = TextEditingController();
+  bool _useToken = false;
+  bool _showForgot = false;
+  String? _forgotStatus;
   String _accent = '#B0714F';
 
   @override
@@ -71,6 +78,10 @@ class _AuthFormsState extends State<_AuthForms> {
     _bookingLink.dispose();
     _login.dispose();
     _password.dispose();
+    _email.dispose();
+    _newPassword.dispose();
+    _token.dispose();
+    _forgotEmail.dispose();
     super.dispose();
   }
 
@@ -114,6 +125,24 @@ class _AuthFormsState extends State<_AuthForms> {
                       labelText: 'Practitioner name',
                       border: OutlineInputBorder(),
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _email,
+                    decoration: const InputDecoration(
+                      labelText: 'Email (for sign-in + recovery)',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.emailAddress,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _newPassword,
+                    decoration: const InputDecoration(
+                      labelText: 'Password (8+ characters)',
+                      border: OutlineInputBorder(),
+                    ),
+                    obscureText: true,
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -188,6 +217,49 @@ class _AuthFormsState extends State<_AuthForms> {
                     'Judges: sign in with demo@estiseries.app / GlowDemo2026',
                     style: theme.textTheme.bodySmall,
                   ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () =>
+                        setState(() => _showForgot = !_showForgot),
+                    child: const Text('Forgot password?'),
+                  ),
+                  if (_showForgot) ...[
+                    TextField(
+                      controller: _forgotEmail,
+                      decoration: const InputDecoration(
+                        labelText: 'Account email',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: TextInputType.emailAddress,
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      onPressed: state.busy ? null : _forgot,
+                      child: const Text('Email me a reset link'),
+                    ),
+                    if (_forgotStatus != null) ...[
+                      const SizedBox(height: 8),
+                      Text(_forgotStatus!, style: theme.textTheme.bodySmall),
+                    ],
+                  ],
+                  TextButton(
+                    onPressed: () => setState(() => _useToken = !_useToken),
+                    child: const Text('Use a sign-in token instead'),
+                  ),
+                  if (_useToken) ...[
+                    TextField(
+                      controller: _token,
+                      decoration: const InputDecoration(
+                        labelText: 'Sign-in token',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      onPressed: state.busy ? null : _signInWithToken,
+                      child: const Text('Sign in with token'),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -202,18 +274,56 @@ class _AuthFormsState extends State<_AuthForms> {
   }
 
   Future<void> _create() async {
+    final email = _email.text.trim();
+    final password = _newPassword.text;
+    if (email.isEmpty || password.length < 8) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Add your email and a password of at least 8 characters — '
+            'they are how you sign in and recover your account.',
+          ),
+        ),
+      );
+      return;
+    }
     final ok = await widget.state.createPractice(
       practiceName: _practiceName.text.trim(),
       practitionerName: _practitionerName.text.trim(),
       bookingLink: _bookingLink.text.trim(),
       accent: _accent,
+      email: email,
+      password: password,
     );
     if (!mounted) return;
     if (ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Practice created — you are signed in.')),
+        const SnackBar(
+          content: Text(
+            'Practice created — check your email to verify it and '
+            'enable account recovery.',
+          ),
+        ),
       );
     }
+  }
+
+  Future<void> _signInWithToken() async {
+    final ok = await widget.state.signInWithToken(_token.text);
+    if (!mounted) return;
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Signed in.')),
+      );
+    }
+  }
+
+  Future<void> _forgot() async {
+    final typed = _forgotEmail.text.trim();
+    final email = typed.isNotEmpty ? typed : _login.text.trim();
+    final message = await widget.state.requestPasswordReset(email);
+    if (!mounted) return;
+    setState(() => _forgotStatus = message);
   }
 
   Future<void> _signIn() async {
@@ -329,6 +439,8 @@ class _ProfileFormState extends State<_ProfileForm> {
           _LogoSection(state: state),
           const SizedBox(height: 24),
           _OfferingsSection(state: state),
+          const SizedBox(height: 24),
+          _AccountSection(state: state),
           const SizedBox(height: 24),
           Card(
             child: Padding(
@@ -838,5 +950,130 @@ class _OfferingEditorState extends State<_OfferingEditor> {
     await widget.state.deleteOffering(existing.id);
     if (!mounted) return;
     Navigator.pop(context);
+  }
+}
+
+/// Setup → Account & recovery (v2.2): the signed-in practitioner's email
+/// + verification state, a resend action while unverified, and the
+/// add-email form for legacy token-only accounts.
+class _AccountSection extends StatefulWidget {
+  const _AccountSection({required this.state});
+
+  final AppState state;
+
+  @override
+  State<_AccountSection> createState() => _AccountSectionState();
+}
+
+class _AccountSectionState extends State<_AccountSection> {
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _add() async {
+    final email = _email.text.trim();
+    final password = _password.text;
+    if (email.isEmpty || password.length < 8) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Enter your email and a password of at least 8 characters.',
+          ),
+        ),
+      );
+      return;
+    }
+    setState(() => _busy = true);
+    final ok = await widget.state.addAccount(email, password);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (ok) _password.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = widget.state;
+    final profile = state.profile!;
+    final theme = Theme.of(context);
+    final email = profile.email;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Account & recovery', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            if (email == null) ...[
+              Text(
+                'Add an email and password so you can get back in if you '
+                'lose this phone or get signed out.',
+                style: theme.textTheme.bodySmall,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _email,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.emailAddress,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _password,
+                decoration: const InputDecoration(
+                  labelText: 'Password (8+ characters)',
+                  border: OutlineInputBorder(),
+                ),
+                obscureText: true,
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: _busy ? null : _add,
+                child: const Text('Add email + password'),
+              ),
+            ] else if (!profile.emailVerified) ...[
+              Text(
+                'Email: $email — not verified yet.',
+                style: theme.textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Verify your email to enable account recovery.',
+                style: theme.textTheme.bodySmall,
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: () => state.resendVerificationEmail(),
+                child: const Text('Resend verification email'),
+              ),
+            ] else ...[
+              Text(
+                'Email: $email — verified.',
+                style: theme.textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Account recovery is on: if you ever get locked out, use '
+                '"Forgot password?" on the sign-in screen.',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+            if (state.accountMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(state.accountMessage!, style: theme.textTheme.bodySmall),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }

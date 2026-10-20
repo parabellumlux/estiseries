@@ -64,9 +64,25 @@ abstract class EstiSeriesApi {
     required String practitionerName,
     String? accent,
     String? bookingLink,
+    String? email,
+    String? password,
   });
 
   Future<AuthResult> login(String login, String password);
+
+  /// POST /api/me/account — set/change the account email + password
+  /// (contract v2.2). Returns the updated profile (email unverified).
+  Future<PractitionerProfile> setAccount({
+    required String email,
+    required String password,
+  });
+
+  /// POST /api/auth/forgot-password — always accepted server-side; the
+  /// reset link is emailed only when an account owns the address.
+  Future<void> forgotPassword(String email);
+
+  /// POST /api/auth/resend-verification — asks for a fresh verify link.
+  Future<void> resendVerification(String email);
 
   Future<PractitionerProfile> getMe();
 
@@ -115,6 +131,8 @@ class HttpApiClient implements EstiSeriesApi {
     required String practitionerName,
     String? accent,
     String? bookingLink,
+    String? email,
+    String? password,
   }) async {
     final decoded = await _request(
       'POST',
@@ -125,6 +143,8 @@ class HttpApiClient implements EstiSeriesApi {
         'practitionerName': practitionerName,
         if (accent != null) 'accent': accent,
         if (bookingLink != null) 'bookingLink': bookingLink,
+        if (email != null) 'email': email,
+        if (password != null) 'password': password,
       },
     );
     final map = _asMap(decoded);
@@ -151,6 +171,37 @@ class HttpApiClient implements EstiSeriesApi {
             ? profile
             : Map<String, dynamic>.from(profile as Map),
       ),
+    );
+  }
+
+  @override
+  Future<PractitionerProfile> setAccount({
+    required String email,
+    required String password,
+  }) async =>
+      PractitionerProfile.fromJson(_asMap(await _request(
+        'POST',
+        '/api/me/account',
+        body: {'email': email, 'password': password},
+      )));
+
+  @override
+  Future<void> forgotPassword(String email) async {
+    await _request(
+      'POST',
+      '/api/auth/forgot-password',
+      auth: false,
+      body: {'email': email},
+    );
+  }
+
+  @override
+  Future<void> resendVerification(String email) async {
+    await _request(
+      'POST',
+      '/api/auth/resend-verification',
+      auth: false,
+      body: {'email': email},
     );
   }
 

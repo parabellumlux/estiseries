@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Skin check-in — EstiSeries</title>
-<link rel="stylesheet" href="styles.css?v=20261020-guide">
+<link rel="stylesheet" href="styles.css?v=20261020-accounts">
 </head>
 <body>
 <header class="site-header">
@@ -47,6 +47,30 @@
       <div class="services-card" id="servicesCard" hidden>
         <h2 class="services-title">Services &amp; prices</h2>
         <div id="servicesGroups"></div>
+      </div>
+
+      <!-- Optional client login (v2.2): recovery only. The personal link
+           above remains the credential — this card never gates anything. -->
+      <div class="account-card" id="accountCard" hidden>
+        <div id="accountCreate">
+          <h2 class="try-card-title">New phone someday? Keep your series.</h2>
+          <p>Your link always works — a login is optional. Create one and you can sign back in on any device, even without your link.</p>
+          <label class="try-label" for="accountEmail">Email</label>
+          <input type="email" class="text-input" id="accountEmail" autocomplete="email" placeholder="you@example.com">
+          <label class="try-label" for="accountPassword">Password (8+ characters)</label>
+          <input type="password" class="text-input" id="accountPassword" autocomplete="new-password" placeholder="Choose a password">
+          <div class="btn-row">
+            <button type="button" class="btn btn-primary" id="accountCreateBtn">Create a login</button>
+            <button type="button" class="btn-link" id="accountDismissBtn">Not now</button>
+          </div>
+          <button type="button" class="btn-link" id="accountForgotBtn">Forgot password?</button>
+          <p class="status-line" id="accountStatus" aria-live="polite"></p>
+        </div>
+        <div id="accountState" hidden>
+          <p id="accountStateText"></p>
+          <button type="button" class="btn-link" id="accountResendBtn" hidden>Resend verification email</button>
+          <p class="status-line" id="accountStateStatus" aria-live="polite"></p>
+        </div>
       </div>
 
       <button type="button" class="btn btn-primary btn-block" id="startBtn">Start my check-in</button>
@@ -114,7 +138,26 @@
       <input type="text" class="text-input" id="tryFirstName" autocomplete="given-name" placeholder="Your first name">
       <button type="button" class="btn btn-primary btn-block" id="tryBtn">Try a real scan</button>
       <p class="status-line" id="tryStatus" aria-live="polite"></p>
+      <button type="button" class="btn-link" id="publicSigninLink">Already created a login? Sign in</button>
     </div>
+  </section>
+
+  <!-- Client sign-in (v2.2): the optional login, for clients who lost
+       their personal link. Reached via /?signin=1. -->
+  <section class="step" id="step-signin" aria-labelledby="signinHeading" hidden>
+    <p class="eyebrow">EstiSeries</p>
+    <h2 id="signinHeading">Sign in to your series</h2>
+    <p class="lede">Use the email and password you saved with your series. Your personal link works too — a login is only for getting back in on a new device.</p>
+    <label class="try-label" for="signinEmail">Email</label>
+    <input type="email" class="text-input" id="signinEmail" autocomplete="email" placeholder="you@example.com">
+    <label class="try-label" for="signinPassword">Password</label>
+    <input type="password" class="text-input" id="signinPassword" autocomplete="current-password" placeholder="Your password">
+    <div class="btn-row">
+      <button type="button" class="btn btn-primary" id="signinBtn">Sign in</button>
+      <button type="button" class="btn-link" id="signinForgotBtn">Forgot password?</button>
+    </div>
+    <p class="status-line" id="signinStatus" aria-live="polite"></p>
+    <p><a href="./">Back to the start</a></p>
   </section>
 
   <!-- Step 1: Consent -->
@@ -300,6 +343,6 @@
   <p>EstiSeries</p>
 </footer>
 
-<script src="app.js?v=20261020-guide"></script>
+<script src="app.js?v=20261020-accounts"></script>
 </body>
 </html>

@@ -143,6 +143,17 @@ function loadDotEnv() {
 
 loadDotEnv();
 
+// Mail (v2.2): verification + recovery email. The mailer reads its own
+// configuration (SMTP_*, MAIL_FROM, MAIL_TRANSPORT) from the environment —
+// which now includes backend/.env — and never logs a credential.
+const { sendMail, TRANSPORT: MAIL_TRANSPORT } = require('./mailer');
+
+const PUBLIC_BASE_URL = (
+  process.env.PUBLIC_BASE_URL || 'https://estiseries.ignisalgos.com'
+).replace(/\/+$/, '');
+const VERIFY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // verification links: 24h
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // password-reset links: 1h
+
 const API_KEY =
   process.env.YOUCAM_API_KEY && process.env.YOUCAM_API_KEY.trim()
     ? process.env.YOUCAM_API_KEY.trim()
@@ -160,6 +171,172 @@ function newToken() {
 
 function hashPassword(salt, password) {
   return crypto.createHash('sha256').update(salt + ':' + password).digest('hex');
+}
+
+// --- Accounts (v2.2): scrypt passwords + one-time email tokens ------------
+// Passwords are stored as one combined scrypt string:
+// "scrypt$<salt base64>$<hash base64>" with a per-password random salt.
+// One-time tokens (verify / reset) are 32 random bytes hex-encoded; only
+// their sha256 hash is ever stored, and each is single-use.
+
+function hashPasswordScrypt(password) {
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(password, salt, 64);
+  return 'scrypt$' + salt.toString('base64') + '$' + hash.toString('base64');
+}
+
+function verifyPasswordScrypt(password, stored) {
+  try {
+    const parts = String(stored || '').split('$');
+    if (parts.length !== 3 || parts[0] !== 'scrypt') return false;
+    const salt = Buffer.from(parts[1], 'base64');
+    const expected = Buffer.from(parts[2], 'base64');
+    if (!salt.length || !expected.length) return false;
+    const actual = crypto.scryptSync(password, salt, expected.length);
+    return crypto.timingSafeEqual(actual, expected);
+  } catch (_) {
+    return false;
+  }
+}
+
+function sha256Hex(text) {
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+function mintOneTimeToken(holder, kind) {
+  const raw = crypto.randomBytes(32).toString('hex');
+  const ttl = kind === 'verify' ? VERIFY_TOKEN_TTL_MS : RESET_TOKEN_TTL_MS;
+  holder[kind + 'TokenHash'] = sha256Hex(raw);
+  holder[kind + 'ExpiresAt'] = new Date(Date.now() + ttl).toISOString();
+  return raw;
+}
+
+function isValidEmail(email) {
+  return (
+    typeof email === 'string' &&
+    email.length <= 254 &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  );
+}
+
+// Practitioners are found by their account email; the legacy demo-style
+// `login.login` still matches so old records keep signing in.
+function findPractitionerByEmail(email) {
+  if (!email) return null;
+  const target = String(email).trim().toLowerCase();
+  if (!target) return null;
+  return (
+    store.practitioners.find(
+      (p) =>
+        (p.email && p.email === target) ||
+        (p.login && p.login.login && p.login.login.toLowerCase() === target)
+    ) || null
+  );
+}
+
+function findClientAccountByEmail(email) {
+  if (!email) return null;
+  const target = String(email).trim().toLowerCase();
+  if (!target) return null;
+  for (const practitioner of store.practitioners) {
+    for (const client of practitioner.clients) {
+      if (client.account && client.account.email === target) {
+        return { practitioner, client };
+      }
+    }
+  }
+  return null;
+}
+
+// Finds the holder (practitioner record or client.account) of a one-time
+// token by its hash, across both stores. Expired tokens do not match.
+function findOneTimeToken(kind, rawToken) {
+  if (!rawToken || typeof rawToken !== 'string') return null;
+  const hash = sha256Hex(rawToken.trim());
+  const hashKey = kind + 'TokenHash';
+  const expKey = kind + 'ExpiresAt';
+  const matches = (holder) =>
+    holder &&
+    holder[hashKey] &&
+    holder[hashKey] === hash &&
+    holder[expKey] &&
+    Date.parse(holder[expKey]) > Date.now();
+  for (const p of store.practitioners) {
+    if (matches(p)) return { role: 'practitioner', holder: p, practitioner: p };
+  }
+  for (const p of store.practitioners) {
+    for (const c of p.clients) {
+      if (c.account && matches(c.account)) {
+        return { role: 'client', holder: c.account, practitioner: p, client: c };
+      }
+    }
+  }
+  return null;
+}
+
+function verifyPractitionerPassword(practitioner, password) {
+  if (practitioner.passwordHash) {
+    return verifyPasswordScrypt(password, practitioner.passwordHash);
+  }
+  if (practitioner.login && practitioner.login.salt && practitioner.login.hash) {
+    const candidate = Buffer.from(
+      hashPassword(practitioner.login.salt, password),
+      'utf8'
+    );
+    const expected = Buffer.from(practitioner.login.hash, 'utf8');
+    return (
+      candidate.length === expected.length &&
+      crypto.timingSafeEqual(candidate, expected)
+    );
+  }
+  return false;
+}
+
+async function sendVerificationEmail(email, rawToken) {
+  const link = PUBLIC_BASE_URL + '/verify?token=' + rawToken;
+  const result = await sendMail({
+    to: email,
+    subject: 'Verify your EstiSeries email',
+    text:
+      'Hello,\n\n' +
+      'Confirm this email address for your EstiSeries account so you can ' +
+      'recover access if you ever lose your phone or get signed out:\n\n' +
+      link +
+      '\n\nThis link expires in 24 hours. If you did not create an ' +
+      'EstiSeries account, you can ignore this email.\n\n— EstiSeries',
+  });
+  if (!result.ok) {
+    console.error(
+      '[estiseries] verification email failed (' +
+        result.transport +
+        '): ' +
+        (result.error || 'unknown error')
+    );
+  }
+}
+
+async function sendResetEmail(email, rawToken) {
+  const link = PUBLIC_BASE_URL + '/reset?token=' + rawToken;
+  const result = await sendMail({
+    to: email,
+    subject: 'Reset your EstiSeries password',
+    text:
+      'Hello,\n\n' +
+      'We received a request to reset the password for your EstiSeries ' +
+      'account. Choose a new password here:\n\n' +
+      link +
+      '\n\nThis link expires in 1 hour. If you did not request a reset, ' +
+      'you can ignore this email — your password will not change.' +
+      '\n\n— EstiSeries',
+  });
+  if (!result.ok) {
+    console.error(
+      '[estiseries] reset email failed (' +
+        result.transport +
+        '): ' +
+        (result.error || 'unknown error')
+    );
+  }
 }
 
 function loadStore() {
@@ -205,6 +382,8 @@ function publicPractitioner(p) {
     clientCount: p.clients.length,
     logoUrl: p.logo ? '/api/practitioners/' + p.id + '/logo' : null,
     offerings: p.offerings || [],
+    email: p.email || null,
+    emailVerified: !!p.emailVerified,
   };
 }
 
@@ -287,6 +466,13 @@ function seedStore() {
           salt,
           hash: hashPassword(salt, DEMO_PASSWORD),
         },
+        email: DEMO_LOGIN,
+        passwordHash: hashPasswordScrypt(DEMO_PASSWORD),
+        emailVerified: true,
+        verifyTokenHash: null,
+        verifyExpiresAt: null,
+        resetTokenHash: null,
+        resetExpiresAt: null,
         clients: [demoClient],
       });
       changed = true;
@@ -342,6 +528,48 @@ function migrateStore() {
     if (!('logo' in p)) {
       p.logo = null;
       changed = true;
+    }
+    // Accounts (v2.2): every practitioner record gains the account fields
+    // (nulls until she adds an email + password); every client record
+    // gains `account` (null until the client creates a login). The demo
+    // practitioner is normalized to a verified account for the seeded
+    // demo password.
+    for (const field of [
+      'email',
+      'passwordHash',
+      'verifyTokenHash',
+      'verifyExpiresAt',
+      'resetTokenHash',
+      'resetExpiresAt',
+    ]) {
+      if (!(field in p)) {
+        p[field] = null;
+        changed = true;
+      }
+    }
+    if (!('emailVerified' in p)) {
+      p.emailVerified = false;
+      changed = true;
+    }
+    if (p.demo && p.login && p.login.login === DEMO_LOGIN) {
+      if (p.email !== DEMO_LOGIN) {
+        p.email = DEMO_LOGIN;
+        changed = true;
+      }
+      if (!p.passwordHash) {
+        p.passwordHash = hashPasswordScrypt(DEMO_PASSWORD);
+        changed = true;
+      }
+      if (p.emailVerified !== true) {
+        p.emailVerified = true;
+        changed = true;
+      }
+    }
+    for (const c of p.clients) {
+      if (!('account' in c)) {
+        c.account = null;
+        changed = true;
+      }
     }
   }
 
@@ -780,12 +1008,45 @@ function editableProfile(body, target) {
   }
 }
 
-function handleCreatePractitioner(body, res) {
+async function handleCreatePractitioner(body, res) {
   const practiceName = requireString(body, 'practiceName');
   const practitionerName = requireString(body, 'practitionerName');
   if (!practiceName || !practitionerName) {
     badRequest(res, 'practiceName and practitionerName are required.');
     return;
+  }
+  // Optional email + password (v2.2): makes the account recoverable.
+  // Calls without an email keep the legacy token-only behavior exactly.
+  let email = null;
+  let passwordHash = null;
+  if (typeof body.email === 'string' && body.email.trim()) {
+    email = body.email.trim().toLowerCase();
+    if (!isValidEmail(email)) {
+      sendJson(res, 400, {
+        status: 'error',
+        errorCode: 'error_invalid_email',
+        message: 'That email address does not look right.',
+      });
+      return;
+    }
+    const password = typeof body.password === 'string' ? body.password : '';
+    if (password.length < 8) {
+      sendJson(res, 400, {
+        status: 'error',
+        errorCode: 'error_invalid_password',
+        message: 'Choose a password of at least 8 characters.',
+      });
+      return;
+    }
+    if (findPractitionerByEmail(email)) {
+      sendJson(res, 409, {
+        status: 'error',
+        errorCode: 'error_email_taken',
+        message: 'An account with that email already exists — sign in instead.',
+      });
+      return;
+    }
+    passwordHash = hashPasswordScrypt(password);
   }
   const practitioner = {
     id: crypto.randomUUID(),
@@ -799,12 +1060,22 @@ function handleCreatePractitioner(body, res) {
     sample: false,
     demo: false,
     login: null,
+    email,
+    passwordHash,
+    emailVerified: false,
+    verifyTokenHash: null,
+    verifyExpiresAt: null,
+    resetTokenHash: null,
+    resetExpiresAt: null,
     offerings: [],
     logo: null,
     clients: [],
   };
   store.practitioners.push(practitioner);
+  let verifyRaw = null;
+  if (email) verifyRaw = mintOneTimeToken(practitioner, 'verify');
   saveStore();
+  if (email) await sendVerificationEmail(email, verifyRaw);
   sendJson(
     res,
     201,
@@ -815,19 +1086,235 @@ function handleCreatePractitioner(body, res) {
 function handleLogin(body, res) {
   const login = requireString(body, 'login');
   const password = typeof body.password === 'string' ? body.password : '';
-  const practitioner = login
-    ? store.practitioners.find((p) => p.login && p.login.login === login)
-    : null;
-  if (
-    !practitioner ||
-    hashPassword(practitioner.login.salt, password) !== practitioner.login.hash
-  ) {
+  const practitioner = login ? findPractitionerByEmail(login) : null;
+  if (!practitioner || !verifyPractitionerPassword(practitioner, password)) {
     unauthorized(res);
     return;
   }
   sendJson(res, 200, {
     token: practitioner.token,
     practitioner: publicPractitioner(practitioner),
+  });
+}
+
+// --- Accounts (v2.2): verification, recovery, client logins ---------------
+
+function invalidEmail(res) {
+  sendJson(res, 400, {
+    status: 'error',
+    errorCode: 'error_invalid_email',
+    message: 'That email address does not look right.',
+  });
+}
+
+function invalidPassword(res) {
+  sendJson(res, 400, {
+    status: 'error',
+    errorCode: 'error_invalid_password',
+    message: 'Choose a password of at least 8 characters.',
+  });
+}
+
+function emailTaken(res) {
+  sendJson(res, 409, {
+    status: 'error',
+    errorCode: 'error_email_taken',
+    message: 'An account with that email already exists — sign in instead.',
+  });
+}
+
+function tokenInvalid(res) {
+  sendJson(res, 400, {
+    status: 'error',
+    errorCode: 'error_token_invalid',
+    message: 'That link is invalid or has expired. Request a fresh one and try again.',
+  });
+}
+
+// POST /api/me/account (Bearer): a token-only practitioner adds (or
+// changes) her email + password. The new email starts unverified.
+async function handleSetAccount(practitioner, body, res) {
+  const email =
+    body && typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  if (!isValidEmail(email)) {
+    invalidEmail(res);
+    return;
+  }
+  const password = body && typeof body.password === 'string' ? body.password : '';
+  if (password.length < 8) {
+    invalidPassword(res);
+    return;
+  }
+  const existing = findPractitionerByEmail(email);
+  if (existing && existing.id !== practitioner.id) {
+    emailTaken(res);
+    return;
+  }
+  practitioner.email = email;
+  practitioner.passwordHash = hashPasswordScrypt(password);
+  practitioner.emailVerified = false;
+  const raw = mintOneTimeToken(practitioner, 'verify');
+  saveStore();
+  await sendVerificationEmail(email, raw);
+  sendJson(res, 200, publicPractitioner(practitioner));
+}
+
+// POST /api/auth/verify-email {token} — one token space for practitioners
+// and clients; the response says which role it belonged to.
+function handleVerifyEmail(body, res) {
+  const found = findOneTimeToken('verify', body && body.token);
+  if (!found) {
+    tokenInvalid(res);
+    return;
+  }
+  found.holder.emailVerified = true;
+  found.holder.verifyTokenHash = null;
+  found.holder.verifyExpiresAt = null;
+  saveStore();
+  sendJson(res, 200, { ok: true, role: found.role });
+}
+
+// POST /api/auth/resend-verification {email} — always {ok:true} so the
+// endpoint never reveals whether an account exists.
+async function handleResendVerification(body, res) {
+  const email =
+    body && typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  if (email) {
+    const practitioner = findPractitionerByEmail(email);
+    if (practitioner && practitioner.email && !practitioner.emailVerified) {
+      const raw = mintOneTimeToken(practitioner, 'verify');
+      saveStore();
+      await sendVerificationEmail(practitioner.email, raw);
+    } else {
+      const foundClient = findClientAccountByEmail(email);
+      if (foundClient && !foundClient.client.account.emailVerified) {
+        const raw = mintOneTimeToken(foundClient.client.account, 'verify');
+        saveStore();
+        await sendVerificationEmail(email, raw);
+      }
+    }
+  }
+  sendJson(res, 200, { ok: true });
+}
+
+// POST /api/auth/forgot-password {email} — always {ok:true}; a reset link
+// is emailed only when an account actually owns the address.
+async function handleForgotPassword(body, res) {
+  const email =
+    body && typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  if (email) {
+    const practitioner = findPractitionerByEmail(email);
+    if (practitioner && (practitioner.passwordHash || practitioner.login)) {
+      const raw = mintOneTimeToken(practitioner, 'reset');
+      saveStore();
+      await sendResetEmail(practitioner.email || email, raw);
+    } else {
+      const foundClient = findClientAccountByEmail(email);
+      if (foundClient && foundClient.client.account.passwordHash) {
+        const raw = mintOneTimeToken(foundClient.client.account, 'reset');
+        saveStore();
+        await sendResetEmail(email, raw);
+      }
+    }
+  }
+  sendJson(res, 200, { ok: true });
+}
+
+// POST /api/auth/reset-password {token, newPassword} — the emailed token
+// proves mailbox ownership, so a successful reset also verifies the email.
+function handleResetPassword(body, res) {
+  const newPassword =
+    body && typeof body.newPassword === 'string' ? body.newPassword : '';
+  if (newPassword.length < 8) {
+    invalidPassword(res);
+    return;
+  }
+  const found = findOneTimeToken('reset', body && body.token);
+  if (!found) {
+    tokenInvalid(res);
+    return;
+  }
+  found.holder.passwordHash = hashPasswordScrypt(newPassword);
+  found.holder.emailVerified = true;
+  found.holder.resetTokenHash = null;
+  found.holder.resetExpiresAt = null;
+  found.holder.verifyTokenHash = null;
+  found.holder.verifyExpiresAt = null;
+  saveStore();
+  sendJson(res, 200, { ok: true, role: found.role });
+}
+
+// POST /api/clients/:token/account {email, password} — OPTIONAL client
+// login, bound to the client record the link token names. The link alone
+// keeps working exactly as before; this exists only so the client can
+// sign back in on a new device without the link.
+async function handleCreateClientAccount(token, body, res) {
+  const found = findClientByToken(token);
+  if (!found) {
+    notFound(res, 'error_client_not_found', 'This link is not active.');
+    return;
+  }
+  const email =
+    body && typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  if (!isValidEmail(email)) {
+    invalidEmail(res);
+    return;
+  }
+  const password = body && typeof body.password === 'string' ? body.password : '';
+  if (password.length < 8) {
+    invalidPassword(res);
+    return;
+  }
+  const clash = findClientAccountByEmail(email);
+  if (clash && clash.client.id !== found.client.id) {
+    emailTaken(res);
+    return;
+  }
+  const account = {
+    email,
+    passwordHash: hashPasswordScrypt(password),
+    emailVerified: false,
+    verifyTokenHash: null,
+    verifyExpiresAt: null,
+    resetTokenHash: null,
+    resetExpiresAt: null,
+  };
+  found.client.account = account;
+  const raw = mintOneTimeToken(account, 'verify');
+  saveStore();
+  await sendVerificationEmail(email, raw);
+  sendJson(res, 200, { ok: true, email, emailVerified: false });
+}
+
+// POST /api/clients/signin {email, password} — the lost-phone path: no
+// personal link needed. Returns the client's own token plus the same
+// public practitioner shape the client view renders.
+function handleClientSignin(body, res) {
+  const email =
+    body && typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  const password = body && typeof body.password === 'string' ? body.password : '';
+  const found = email ? findClientAccountByEmail(email) : null;
+  if (
+    !found ||
+    !verifyPasswordScrypt(password, found.client.account.passwordHash)
+  ) {
+    unauthorized(res);
+    return;
+  }
+  const { practitioner, client } = found;
+  sendJson(res, 200, {
+    clientToken: client.token,
+    practitioner: {
+      practiceName: practitioner.practiceName,
+      practitionerName: practitioner.practitionerName,
+      accent: practitioner.accent,
+      bookingLink: practitioner.bookingLink,
+      logoUrl: practitioner.logo
+        ? '/api/practitioners/' + practitioner.id + '/logo'
+        : null,
+      offerings: (practitioner.offerings || []).filter((o) => o.active),
+    },
+    client: { firstName: client.firstName },
   });
 }
 
@@ -1043,7 +1530,15 @@ function handleGetPublicClient(token, res) {
         : null,
       offerings: (practitioner.offerings || []).filter((o) => o.active),
     },
-    client: { firstName: client.firstName },
+    client: {
+      firstName: client.firstName,
+      account: client.account
+        ? {
+            email: client.account.email,
+            emailVerified: !!client.account.emailVerified,
+          }
+        : null,
+    },
     plan: client.plan || null,
     scans: client.scans.map((s) => ({
       label: s.label,
@@ -1171,7 +1666,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && pathname === '/api/practitioners') {
-      handleCreatePractitioner(body, res);
+      await handleCreatePractitioner(body, res);
       return;
     }
 
@@ -1201,6 +1696,10 @@ const server = http.createServer(async (req, res) => {
         editableProfile(body, practitioner);
         saveStore();
         sendJson(res, 200, publicPractitioner(practitioner));
+        return;
+      }
+      if (pathname === '/api/me/account' && req.method === 'POST') {
+        await handleSetAccount(practitioner, body, res);
         return;
       }
       if (pathname === '/api/me/offerings' && req.method === 'GET') {
@@ -1273,6 +1772,28 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Accounts (v2.2): public verification / recovery endpoints.
+    if (req.method === 'POST' && pathname === '/api/auth/verify-email') {
+      handleVerifyEmail(body, res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/auth/resend-verification') {
+      await handleResendVerification(body, res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/auth/forgot-password') {
+      await handleForgotPassword(body, res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/auth/reset-password') {
+      handleResetPassword(body, res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/clients/signin') {
+      handleClientSignin(body, res);
+      return;
+    }
+
     // Public practitioner logo (the client page displays it; no auth).
     const publicLogoMatch = pathname.match(/^\/api\/practitioners\/([^/]+)\/logo$/);
     if (publicLogoMatch && req.method === 'GET') {
@@ -1289,6 +1810,15 @@ const server = http.createServer(async (req, res) => {
     const clientScanMatch = pathname.match(/^\/api\/clients\/([^/]+)\/scans$/);
     if (clientScanMatch && req.method === 'POST') {
       await handlePostClientScan(decodeURIComponent(clientScanMatch[1]), body, res);
+      return;
+    }
+    const clientAccountMatch = pathname.match(/^\/api\/clients\/([^/]+)\/account$/);
+    if (clientAccountMatch && req.method === 'POST') {
+      await handleCreateClientAccount(
+        decodeURIComponent(clientAccountMatch[1]),
+        body,
+        res
+      );
       return;
     }
     const clientTaskMatch = pathname.match(/^\/api\/clients\/([^/]+)\/scans\/([^/]+)$/);
@@ -1314,6 +1844,7 @@ server.listen(PORT, () => {
   console.log(
     '[estiseries] backend listening on http://localhost:' + PORT + ' (' + MODE + ' mode)'
   );
+  console.log('[estiseries] mail transport: ' + MAIL_TRANSPORT);
   if (MODE !== 'live') {
     console.log(
       '[estiseries] WARNING: no YOUCAM_API_KEY set — store endpoints work, scans return error_not_configured.'

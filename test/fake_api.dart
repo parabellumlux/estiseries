@@ -30,6 +30,10 @@ class FakeApi implements EstiSeriesApi {
   String? lastSavedPlanClientId;
   String? lastLogin;
   String? createdFirstName;
+  String? lastCreateEmail;
+  String? lastAccountEmail;
+  String? lastForgotEmail;
+  String? lastResendEmail;
 
   @override
   String? token;
@@ -40,8 +44,11 @@ class FakeApi implements EstiSeriesApi {
     required String practitionerName,
     String? accent,
     String? bookingLink,
+    String? email,
+    String? password,
   }) async {
     token = 'token-created';
+    lastCreateEmail = email;
     return (
       token: 'token-created',
       practitioner: PractitionerProfile(
@@ -50,8 +57,36 @@ class FakeApi implements EstiSeriesApi {
         practitionerName: practitionerName,
         accent: accent ?? '#B0714F',
         bookingLink: bookingLink ?? '',
+        email: email,
+        emailVerified: false,
       ),
     );
+  }
+
+  @override
+  Future<PractitionerProfile> setAccount({
+    required String email,
+    required String password,
+  }) async {
+    if (token == null) {
+      throw const ApiException(401, 'error_unauthorized');
+    }
+    if (email == 'taken@example.com') {
+      throw const ApiException(
+          409, 'error_email_taken', 'That email already has an account.');
+    }
+    lastAccountEmail = email;
+    return _profile.copyWith(email: email, emailVerified: false);
+  }
+
+  @override
+  Future<void> forgotPassword(String email) async {
+    lastForgotEmail = email;
+  }
+
+  @override
+  Future<void> resendVerification(String email) async {
+    lastResendEmail = email;
   }
 
   @override

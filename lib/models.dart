@@ -12,6 +12,8 @@ class PractitionerProfile {
     required this.accent,
     required this.bookingLink,
     this.logoUrl,
+    this.email,
+    this.emailVerified = false,
     this.createdAt = '',
     this.clientCount,
   });
@@ -24,6 +26,8 @@ class PractitionerProfile {
         accent: json['accent'] as String? ?? '#B0714F',
         bookingLink: json['bookingLink'] as String? ?? '',
         logoUrl: json['logoUrl'] as String?,
+        email: json['email'] as String?,
+        emailVerified: json['emailVerified'] as bool? ?? false,
         createdAt: json['createdAt'] as String? ?? '',
         clientCount: (json['clientCount'] as num?)?.toInt(),
       );
@@ -39,6 +43,13 @@ class PractitionerProfile {
   /// Path of the practice logo on the backend
   /// (`/api/practitioners/<id>/logo`), or null when none is uploaded.
   final String? logoUrl;
+
+  /// Account email (contract v2.2), or null for a token-only account.
+  final String? email;
+
+  /// Whether the account email is verified — verification is what makes
+  /// email-based account recovery trustworthy.
+  final bool emailVerified;
   final String createdAt;
   final int? clientCount;
 
@@ -48,6 +59,8 @@ class PractitionerProfile {
     String? accent,
     String? bookingLink,
     String? logoUrl,
+    String? email,
+    bool? emailVerified,
   }) =>
       PractitionerProfile(
         id: id,
@@ -56,6 +69,8 @@ class PractitionerProfile {
         accent: accent ?? this.accent,
         bookingLink: bookingLink ?? this.bookingLink,
         logoUrl: logoUrl ?? this.logoUrl,
+        email: email ?? this.email,
+        emailVerified: emailVerified ?? this.emailVerified,
         createdAt: createdAt,
         clientCount: clientCount,
       );

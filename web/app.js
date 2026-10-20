@@ -110,9 +110,25 @@
     clientToken = match ? decodeURIComponent(match[1]) : null;
   }
   if (clientToken) clientToken = clientToken.trim() || null;
+  var hadLinkParam = !!clientToken;
+  // v2.2: /?signin=1 asks for the sign-in view; otherwise a token stored by
+  // an earlier sign-in (lost-link recovery) resumes her series.
+  var signinRequested = false;
+  try {
+    signinRequested = new URLSearchParams(window.location.search).get("signin") === "1";
+  } catch (e) {
+    signinRequested = /[?&]signin=1/.test(window.location.search);
+  }
+  if (!clientToken && !signinRequested) {
+    try {
+      var storedToken = window.localStorage.getItem("estiseries.clientToken");
+      if (storedToken) clientToken = storedToken;
+    } catch (e) {}
+  }
 
   var practitioner = null; // {practiceName, practitionerName, accent, bookingLink}
   var clientFirstName = "";
+  var clientAccount = null; // {email, emailVerified} once she creates a login (v2.2)
   var plan = null;
   var timelineScans = []; // normalized scan records, oldest first
   var currentScan = null;  // normalized latest / just-completed scan
@@ -138,6 +154,7 @@
   function applyClientRecord(body) {
     practitioner = body.practitioner || null;
     clientFirstName = (body.client && body.client.firstName) || "";
+    clientAccount = (body.client && body.client.account) || null;
     plan = body.plan || null;
     timelineScans = (body.scans || []).map(normalizeScan).filter(function (s) { return s !== null; });
     baseline = timelineScans.length ? timelineScans[0] : null;
@@ -250,6 +267,7 @@
 
     renderHero();
     renderServices();
+    renderAccountCard();
     showStep(0);
   }
 
@@ -1306,8 +1324,187 @@
     }
   }
 
+
+  // ---- Client login (v2.2) — OPTIONAL, recovery only ----
+  // The personal link remains the credential; nothing in the scan flow
+  // needs an account, and a client who never creates one loses nothing.
+  // A login only lets her sign back in on a new device without the link.
+  function postJson(path, payload) {
+    return fetch(apiUrl(path), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {})
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (body) {
+        return { httpStatus: r.status, body: body };
+      });
+    });
+  }
+
+  function renderAccountCard() {
+    var card = el("accountCard");
+    if (!card) return;
+    var dismissed = false;
+    try {
+      dismissed = window.sessionStorage.getItem("estiseries.accountOfferDismissed") === "1";
+    } catch (e) {}
+    el("accountCreate").hidden = !!clientAccount;
+    el("accountState").hidden = !clientAccount;
+    if (!clientAccount) {
+      card.hidden = dismissed;
+      return;
+    }
+    card.hidden = false;
+    if (clientAccount.emailVerified) {
+      el("accountStateText").textContent =
+        "Login on file for " + clientAccount.email + " — verified, so you can sign back in on any device.";
+      el("accountResendBtn").hidden = true;
+    } else {
+      el("accountStateText").textContent =
+        "Login created for " + clientAccount.email + ". Verify your email to enable account recovery.";
+      el("accountResendBtn").hidden = false;
+    }
+  }
+
+  function showSigninView() {
+    steps.forEach(function (id) { el(id).hidden = true; });
+    el("practiceMark").hidden = true;
+    el("progressWrap").hidden = true;
+    el("step-signin").hidden = false;
+    document.title = "Sign in — EstiSeries";
+  }
+
+  function wireAccountUi() {
+    el("accountDismissBtn").addEventListener("click", function () {
+      try {
+        window.sessionStorage.setItem("estiseries.accountOfferDismissed", "1");
+      } catch (e) {}
+      el("accountCard").hidden = true;
+    });
+    el("accountCreateBtn").addEventListener("click", function () {
+      var email = el("accountEmail").value.trim();
+      var password = el("accountPassword").value;
+      var status = el("accountStatus");
+      if (!email || password.length < 8) {
+        status.textContent = "Enter your email and a password of at least 8 characters.";
+        return;
+      }
+      status.textContent = "Creating your login…";
+      postJson("/api/clients/" + encodeURIComponent(clientToken) + "/account", {
+        email: email,
+        password: password
+      })
+        .then(function (res) {
+          if (res.httpStatus === 200) {
+            clientAccount = { email: email, emailVerified: false };
+            renderAccountCard();
+            el("accountStateStatus").textContent =
+              "Login created — check your email for a verification link.";
+            return;
+          }
+          if (res.httpStatus === 409) {
+            status.textContent = "That email already has a login — use Sign in instead.";
+            return;
+          }
+          status.textContent =
+            (res.body && res.body.message) || "We could not create that login just now.";
+        })
+        .catch(function () {
+          status.textContent = "We could not create that login just now.";
+        });
+    });
+    el("accountForgotBtn").addEventListener("click", function () {
+      var email = el("accountEmail").value.trim();
+      var status = el("accountStatus");
+      if (!email) {
+        status.textContent = "Enter your email above first, then tap Forgot password.";
+        return;
+      }
+      postJson("/api/auth/forgot-password", { email: email })
+        .then(function () {
+          status.textContent = "If that email has a login, a reset link is on its way.";
+        })
+        .catch(function () {
+          status.textContent = "We could not send that just now.";
+        });
+    });
+    el("accountResendBtn").addEventListener("click", function () {
+      if (!clientAccount) return;
+      postJson("/api/auth/resend-verification", { email: clientAccount.email })
+        .then(function () {
+          el("accountStateStatus").textContent = "Verification email sent — check your inbox.";
+        })
+        .catch(function () {
+          el("accountStateStatus").textContent = "We could not send that just now.";
+        });
+    });
+    el("publicSigninLink").addEventListener("click", function () {
+      window.location.href = "./?signin=1";
+    });
+    el("signinBtn").addEventListener("click", function () {
+      var email = el("signinEmail").value.trim();
+      var password = el("signinPassword").value;
+      var status = el("signinStatus");
+      if (!email || !password) {
+        status.textContent = "Enter your email and password.";
+        return;
+      }
+      status.textContent = "Signing in…";
+      postJson("/api/clients/signin", { email: email, password: password })
+        .then(function (res) {
+          if (res.httpStatus !== 200 || !res.body.clientToken) {
+            status.textContent =
+              "That email and password don't match a login. Your personal link works too.";
+            return;
+          }
+          clientToken = res.body.clientToken;
+          try {
+            window.localStorage.setItem("estiseries.clientToken", clientToken);
+          } catch (e) {}
+          try {
+            window.history.replaceState({}, "", window.location.pathname);
+          } catch (e) {}
+          el("step-signin").hidden = true;
+          return fetchClientRecord().then(function (rec) {
+            if (rec.httpStatus !== 200 || !rec.body || !rec.body.practitioner) {
+              status.textContent = "Signed in, but we could not load your series just now.";
+              el("step-signin").hidden = false;
+              return;
+            }
+            applyClientRecord(rec.body);
+            showPersonalWelcome();
+            if (currentScan) {
+              renderReport();
+              renderTimeline();
+            }
+          });
+        })
+        .catch(function () {
+          status.textContent = "We could not sign you in just now.";
+        });
+    });
+    el("signinForgotBtn").addEventListener("click", function () {
+      var email = el("signinEmail").value.trim();
+      var status = el("signinStatus");
+      if (!email) {
+        status.textContent = "Enter your email above first, then tap Forgot password.";
+        return;
+      }
+      postJson("/api/auth/forgot-password", { email: email })
+        .then(function () {
+          status.textContent = "If that email has a login, a reset link is on its way.";
+        })
+        .catch(function () {
+          status.textContent = "We could not send that just now.";
+        });
+    });
+  }
+  wireAccountUi();
+
   // ---- Boot: resolve the client token, if any ----
-  if (!clientToken) {
+  if (signinRequested) {
+    showSigninView();
+  } else if (!clientToken) {
     showPublicLanding();
   } else {
     // Until the token resolves, keep the welcome step neutral.
@@ -1320,6 +1517,16 @@
     fetchClientRecord()
       .then(function (res) {
         if (res.httpStatus === 404) {
+          if (!hadLinkParam) {
+            // A stored token from an earlier sign-in no longer resolves:
+            // forget it and land softly — no scolding about a link she
+            // never used.
+            try {
+              window.localStorage.removeItem("estiseries.clientToken");
+            } catch (e) {}
+            showPublicLanding();
+            return;
+          }
           showInvalidLink("This link isn't active — ask your practitioner for your personal link.");
           return;
         }

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verify your email — EstiSeries</title>
+<link rel="stylesheet" href="../styles.css?v=20261020-accounts">
+</head>
+<body>
+<main class="auth-wrap">
+  <p class="eyebrow">EstiSeries</p>
+  <h1 id="authTitle">Verifying your email…</h1>
+  <p class="lede" id="authText">One moment.</p>
+  <p><a href="../">Go to EstiSeries</a></p>
+</main>
+<script>
+// Email landing page (v2.2): the token travels in the query string; this
+// page posts it to the backend. Same-origin API (production nginx proxies
+// /api/); window.BACKEND_BASE_URL can override for local development.
+(function () {
+  var base = (window.BACKEND_BASE_URL || "").replace(/\/+$/, "");
+  var token = "";
+  try {
+    token = new URLSearchParams(window.location.search).get("token") || "";
+  } catch (e) {
+    var m = window.location.search.match(/[?&]token=([^&]*)/);
+    token = m ? decodeURIComponent(m[1]) : "";
+  }
+  var title = document.getElementById("authTitle");
+  var text = document.getElementById("authText");
+  if (!token) {
+    title.textContent = "That link is missing its code";
+    text.textContent = "Open the verification link from your email again — it carries the code this page needs.";
+    return;
+  }
+  fetch(base + "/api/auth/verify-email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: token })
+  })
+    .then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) {
+        return { status: r.status, body: b };
+      });
+    })
+    .then(function (res) {
+      if (res.status === 200 && res.body.ok) {
+        title.textContent = "Email verified";
+        text.textContent = "Thanks — account recovery is now on for your EstiSeries account. You can close this page and head back to your series or the app.";
+      } else {
+        title.textContent = "That link didn't work";
+        text.textContent = "It may have expired (verification links last 24 hours) or already been used. Sign in and use “Resend verification email” for a fresh one.";
+      }
+    })
+    .catch(function () {
+      title.textContent = "Something went wrong";
+      text.textContent = "We could not verify just now — try opening the link again in a moment.";
+    });
+})();
+</script>
+</body>
+</html>

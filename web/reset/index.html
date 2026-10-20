@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reset your password — EstiSeries</title>
+<link rel="stylesheet" href="../styles.css?v=20261020-accounts">
+</head>
+<body>
+<main class="auth-wrap">
+  <p class="eyebrow">EstiSeries</p>
+  <h1>Reset your password</h1>
+  <p class="lede">Choose a new password for your EstiSeries account. Resetting also verifies your email.</p>
+  <div id="resetForm">
+    <label class="try-label" for="newPassword">New password (8+ characters)</label>
+    <input type="password" class="text-input" id="newPassword" autocomplete="new-password" placeholder="New password">
+    <label class="try-label" for="confirmPassword">Type it again</label>
+    <input type="password" class="text-input" id="confirmPassword" autocomplete="new-password" placeholder="Confirm password">
+    <div class="btn-row">
+      <button type="button" class="btn btn-primary" id="resetBtn">Set new password</button>
+    </div>
+  </div>
+  <p class="status-line" id="resetStatus" aria-live="polite"></p>
+  <p><a href="../">Go to EstiSeries</a></p>
+</main>
+<script>
+// Email landing page (v2.2): the reset token travels in the query string.
+// Same-origin API in production; window.BACKEND_BASE_URL can override.
+(function () {
+  var base = (window.BACKEND_BASE_URL || "").replace(/\/+$/, "");
+  var token = "";
+  try {
+    token = new URLSearchParams(window.location.search).get("token") || "";
+  } catch (e) {
+    var m = window.location.search.match(/[?&]token=([^&]*)/);
+    token = m ? decodeURIComponent(m[1]) : "";
+  }
+  var status = document.getElementById("resetStatus");
+  if (!token) {
+    status.textContent = "That link is missing its code — open the reset link from your email again.";
+    document.getElementById("resetForm").hidden = true;
+    return;
+  }
+  document.getElementById("resetBtn").addEventListener("click", function () {
+    var pw = document.getElementById("newPassword").value;
+    var confirm = document.getElementById("confirmPassword").value;
+    if (pw.length < 8) {
+      status.textContent = "Choose a password of at least 8 characters.";
+      return;
+    }
+    if (pw !== confirm) {
+      status.textContent = "Those two passwords don't match.";
+      return;
+    }
+    status.textContent = "Updating your password…";
+    fetch(base + "/api/auth/reset-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: token, newPassword: pw })
+    })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (b) {
+          return { status: r.status, body: b };
+        });
+      })
+      .then(function (res) {
+        if (res.status === 200 && res.body.ok) {
+          document.getElementById("resetForm").hidden = true;
+          status.textContent = "Password updated — sign in with your new password.";
+        } else if (res.body && res.body.message) {
+          status.textContent = res.body.message;
+        } else {
+          status.textContent = "That link didn't work — it may have expired (reset links last 1 hour). Request a fresh one from the sign-in page.";
+        }
+      })
+      .catch(function () {
+        status.textContent = "We could not update your password just now — try again in a moment.";
+      });
+  });
+})();
+</script>
+</body>
+</html>

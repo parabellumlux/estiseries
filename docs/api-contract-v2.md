@@ -179,3 +179,95 @@ seeded with five active offerings (Botox® Cosmetic $12 per unit, RF
 Microneedling $350 per session 60 min, Signature Glow Facial $120 60 min,
 Gentle Renewal Cleanser $38, Hydration Boost Serum $64) so the judge
 accounts show a populated menu. No other practitioner is seeded.
+
+## v2.2 additions (2026-10-20) — accounts, email verification, recovery
+
+Email + password accounts for BOTH practitioners and clients, existing
+primarily so access can be recovered when a phone is lost. Passwords are
+stored as combined scrypt strings (`scrypt$<salt>$<hash>`, per-password
+random salt, timing-safe compare); plaintext passwords and raw one-time
+tokens are never stored or logged. One-time tokens are 32 random bytes
+(hex); only their sha256 hash is stored. Verification tokens live 24h,
+reset tokens 1h, and both are single-use. Mail is sent by the backend
+mailer (backend/mailer.js) — SMTP or the host sendmail binary, configured
+only via environment (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS,
+MAIL_FROM); verification links point at `<PUBLIC_BASE_URL>/verify`,
+reset links at `<PUBLIC_BASE_URL>/reset`.
+
+### Rules that did not change
+- The practitioner Bearer token is still the app session credential;
+  login RETURNS it. Bearer auth is untouched.
+- **Client login is VOLUNTARY.** The QR/link flow and the scan endpoints
+  work fully with no client account — no gating, no required sign-up, no
+  blocking step. A client who never creates a login loses nothing; the
+  login exists only for self-serve recovery on a new device.
+- An unverified email does NOT block sign-in. Until verified, the app and
+  the client page surface "Verify your email to enable account recovery"
+  with a resend action.
+- The demo practitioner ends seeded/migrated with email
+  `demo@estiseries.app`, password `GlowDemo2026` (scrypt), and
+  `emailVerified: true`.
+
+### Practitioner account
+Record gains: `email` (lowercase, unique across practitioners),
+`passwordHash`, `emailVerified`, `verifyTokenHash`/`verifyExpiresAt`,
+`resetTokenHash`/`resetExpiresAt` (nulls/defaults via migration).
+`publicPractitioner` (and so POST /api/practitioners, POST /api/login,
+GET/PUT /api/me responses) gains `email` and `emailVerified`.
+
+- `POST /api/practitioners` — accepts optional `email` + `password`
+  alongside the existing fields. With an email: the password must be ≥ 8
+  chars (400 `error_invalid_password`), the address must look like an
+  email (400 `error_invalid_email`) and be unique (409
+  `error_email_taken`); the account is created UNVERIFIED and a
+  verification email is sent. Without an email the call behaves exactly
+  as before (legacy token-only account).
+- `POST /api/login {login, password}` — `login` is matched against the
+  account email (the seeded demo login name still matches). When the
+  practitioner has a password, it is verified (wrong → 401). Practitioners
+  without a password cannot password-login.
+- `POST /api/me/account` (Bearer) `{email, password}` — sets/changes the
+  caller's email + password (unique, else 409 `error_email_taken`),
+  marks it unverified, and sends a verification email. → 200 the profile.
+
+### Shared verification / recovery
+- `POST /api/auth/verify-email {token}` — checks practitioner AND client
+  accounts; success sets `emailVerified`, clears the token → `{ok:true,
+  role}` where role is `practitioner` or `client`. Invalid/expired → 400
+  `error_token_invalid`.
+- `POST /api/auth/resend-verification {email}` — re-sends a verification
+  email when an unverified account owns the address. ALWAYS `{ok:true}`
+  (no account enumeration).
+- `POST /api/auth/forgot-password {email}` — mints a reset token and
+  emails the reset link when a practitioner or client account owns the
+  address. ALWAYS `{ok:true}`.
+- `POST /api/auth/reset-password {token, newPassword}` — password ≥ 8
+  (400 `error_invalid_password`); a valid token sets the new password,
+  marks the email verified (the emailed link proves mailbox ownership),
+  and clears the token → `{ok:true, role}`. Invalid/expired → 400
+  `error_token_invalid`.
+
+### Client account (optional — see the voluntary rule above)
+Client records gain `account`: null until created, then `{email
+(lowercase, unique across client accounts), passwordHash,
+emailVerified, verify/reset hash+expiry}`. `GET /api/clients/:token`
+gains `client.account`: `{email, emailVerified}` or null.
+
+- `POST /api/clients/:token/account {email, password}` — binds a login
+  to the client the link token names (the link token is the claim
+  credential). Duplicate client email → 409 `error_email_taken`; sends a
+  verification email → `{ok:true, email, emailVerified:false}`.
+- `POST /api/clients/signin {email, password}` — the lost-phone path:
+  no link needed → `{clientToken, practitioner:{public client-view
+  fields}, client:{firstName}}`; anything else → 401.
+- Client verification and password reset use the shared /api/auth
+  endpoints above.
+
+### Web pages
+- `/verify?token=...` and `/reset?token=...` (static pages under web/)
+  read the token from the query string and POST it to the endpoints
+  above; the reset page collects the new password twice.
+- The client page shows an optional, dismissible "Create a login" card
+  on the personal welcome; a sign-in view lives at `/?signin=1` and, on
+  success, stores the client token in localStorage and renders the
+  series with no `?c=` in the URL.

@@ -112,6 +112,8 @@ class AppState extends ChangeNotifier {
     required String practitionerName,
     required String bookingLink,
     required String accent,
+    String? email,
+    String? password,
   }) async {
     busy = true;
     authMessage = null;
@@ -122,6 +124,8 @@ class AppState extends ChangeNotifier {
         practitionerName: practitionerName,
         accent: accent,
         bookingLink: bookingLink,
+        email: email,
+        password: password,
       );
       await _adoptSession(result);
       return true;
@@ -160,6 +164,89 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Token fallback sign-in: a practitioner whose only credential is her
+  /// device token (legacy accounts) can paste it on a new device. The
+  /// token is validated by loading the profile with it.
+  Future<bool> signInWithToken(String token) async {
+    final trimmed = token.trim();
+    if (trimmed.isEmpty) {
+      authMessage = 'Paste your sign-in token first.';
+      notifyListeners();
+      return false;
+    }
+    busy = true;
+    authMessage = null;
+    notifyListeners();
+    try {
+      api.token = trimmed;
+      final me = await api.getMe();
+      await _adoptSession((token: trimmed, practitioner: me));
+      return true;
+    } on ApiException catch (e) {
+      api.token = null;
+      authMessage = e.isUnauthorized
+          ? 'That token did not match an account. Check it and try again.'
+          : e.message ?? 'Sign-in failed (${e.errorCode}).';
+      return false;
+    } catch (_) {
+      api.token = null;
+      authMessage = 'Could not reach the server. Try again.';
+      return false;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  // ---- Account & recovery (v2.2) --------------------------------------------
+
+  String? accountMessage;
+
+  /// Adds (or changes) the signed-in practitioner's email + password via
+  /// POST /api/me/account. The new email starts unverified; a verification
+  /// email is sent by the backend.
+  Future<bool> addAccount(String email, String password) async {
+    try {
+      profile = await api.setAccount(email: email, password: password);
+      accountMessage =
+          'Account saved. Check $email for a verification link — verifying enables account recovery.';
+      notifyListeners();
+      return true;
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) await _expireSession();
+      accountMessage = e.message ?? 'Could not save your account.';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Asks the backend for a fresh verification email for the profile's
+  /// (unverified) address.
+  Future<void> resendVerificationEmail() async {
+    final email = profile?.email;
+    if (email == null) return;
+    try {
+      await api.resendVerification(email);
+      accountMessage = 'Verification email sent to $email.';
+    } catch (_) {
+      accountMessage = 'Could not send the verification email just now.';
+    }
+    notifyListeners();
+  }
+
+  /// Starts email-based recovery. The backend answers the same way
+  /// whether or not the address owns an account, and so does this copy.
+  Future<String> requestPasswordReset(String email) async {
+    try {
+      await api.forgotPassword(email.trim());
+      return 'If that email has an account, a reset link is on its way. The link lasts 1 hour.';
+    } on ApiException catch (e) {
+      return e.message ?? 'Could not send the reset email just now.';
+    } catch (_) {
+      return 'Could not reach the server. Try again.';
+    }
+  }
+
   Future<void> _adoptSession(AuthResult result) async {
     api.token = result.token;
     await tokenStore.write(result.token);
@@ -188,6 +275,7 @@ class AppState extends ChangeNotifier {
     profileMessage = null;
     offerings = [];
     offeringsMessage = null;
+    accountMessage = null;
     draft = _defaultDraft();
     draftVersion++;
     tabIndex = 0;
