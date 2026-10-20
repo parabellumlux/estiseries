@@ -483,6 +483,7 @@
   var guideBusy = false;
   var guideDetector = null;
   var guideCanvas = document.createElement("canvas");
+  var guideGoodStreak = 0, guideBadStreak = 0, guideShownGood = false;
   try {
     if ("FaceDetector" in window) guideDetector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
   } catch (e) { guideDetector = null; }
@@ -498,17 +499,26 @@
   function assessPlacement(m) {
     // m: {brightness, box:{cx,cy,w}|null, skin:{ratio,cx,w}|null}
     if (typeof m.brightness === "number") {
-      if (m.brightness < 65) return { good: false, reason: "Too dark — face a window or brighter light" };
-      if (m.brightness > 242) return { good: false, reason: "Very bright — soften the light a little" };
+      if (m.brightness < 50) return { good: false, reason: "Too dark — face a window or brighter light" };
+      if (m.brightness > 248) return { good: false, reason: "Very bright — soften the light a little" };
     }
     var box = m.box || m.skin;
     if (!box) return { good: false, reason: "No face detected — position your face in the oval" };
-    if (box.w < 0.26) return { good: false, reason: "Move a little closer" };
-    if (box.w > 0.88) return { good: false, reason: "Move back a little" };
-    if (Math.abs(box.cx - 0.5) > 0.16 || Math.abs(box.cy - 0.48) > 0.20) {
+    if (box.w < 0.42) return { good: false, reason: "Move a little closer" };
+    if (box.w > 0.86) return { good: false, reason: "Move back a little" };
+    if (Math.abs(box.cx - 0.5) > 0.18 || Math.abs(box.cy - 0.47) > 0.22) {
       return { good: false, reason: "Center your face in the oval" };
     }
     return { good: true, reason: "Good — you're well placed" };
+  }
+  function isSkinPixel(r, g, b) {
+    // Two tests, either may pass: the classic RGB rule (loosened) and a
+    // YCbCr rule, which holds up far better across lighting and skin tones.
+    var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    if (r > 55 && g > 30 && b > 15 && r > g && r > b && (r - b) > 10 && (mx - mn) > 8 && (mx - mn) < 170) return true;
+    var cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+    var cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+    return cb > 77 && cb < 127 && cr > 133 && cr < 173;
   }
   function frameMetrics(source, srcW, srcH) {
     // Draw the source down to a small canvas and read luminance + skin pixels.
@@ -520,7 +530,8 @@
     var data;
     try { data = ctx.getImageData(0, 0, w, h).data; } catch (e) { return { brightness: null, box: null, skin: null }; }
     var lumSum = 0, count = 0;
-    var skinCount = 0, skinX = 0, skinY = 0, skinMinX = w, skinMaxX = 0;
+    var skinCount = 0, skinX = 0, skinY = 0;
+    var colCounts = {};
     for (var y = 0; y < h; y += 2) {
       for (var x = 0; x < w; x += 2) {
         var i = (y * w + x) * 4;
@@ -528,16 +539,26 @@
         lumSum += 0.2126 * r + 0.7152 * g + 0.0722 * b;
         count++;
         var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-        if (r > 60 && g > 35 && b > 20 && r > g && r > b && (r - b) > 15 && (mx - mn) > 15 && (mx - mn) < 130) {
+        if (isSkinPixel(r, g, b)) {
           skinCount++; skinX += x; skinY += y;
-          if (x < skinMinX) skinMinX = x;
-          if (x > skinMaxX) skinMaxX = x;
+          colCounts[x] = (colCounts[x] || 0) + 1;
         }
       }
     }
     var skin = null;
-    if (count && skinCount / count > 0.02) {
-      skin = { ratio: skinCount / count, cx: (skinX / skinCount) / w, cy: (skinY / skinCount) / h, w: (skinMaxX - skinMinX) / w };
+    if (count && skinCount / count > 0.012) {
+      // Span from the 2%..98% percentile columns, so stray skin-colored
+      // background pixels cannot stretch or shrink the measured face width.
+      var lo = 0.02 * skinCount, hi = 0.98 * skinCount, cum = 0, spanMin = null, spanMax = null;
+      var cols = Object.keys(colCounts).map(Number).sort(function (a, b) { return a - b; });
+      for (var ci = 0; ci < cols.length; ci++) {
+        cum += colCounts[cols[ci]];
+        if (spanMin === null && cum >= lo) spanMin = cols[ci];
+        if (cum >= hi) { spanMax = cols[ci]; break; }
+      }
+      if (spanMax === null) spanMax = cols[cols.length - 1];
+      if (spanMin === null) spanMin = cols[0];
+      skin = { ratio: skinCount / count, cx: (skinX / skinCount) / w, cy: (skinY / skinCount) / h, w: (spanMax - spanMin) / w };
     }
     return { brightness: count ? lumSum / count : null, box: null, skin: skin };
   }
@@ -556,11 +577,24 @@
     detectBox(source, srcW, srcH).then(function (box) {
       if (box) metrics.box = box;
       var verdict = assessPlacement(metrics);
-      setGuide(verdict.good, verdict.reason);
+      // Two-frame smoothing each way: one noisy frame can no longer flip
+      // the oval, and green no longer needs a single perfect frame.
+      if (verdict.good) {
+        guideGoodStreak++; guideBadStreak = 0;
+        if (guideGoodStreak >= 2) guideShownGood = true;
+      } else {
+        guideBadStreak++; guideGoodStreak = 0;
+        if (guideBadStreak >= 2) guideShownGood = false;
+      }
+      var text = verdict.good
+        ? (guideShownGood ? verdict.reason : "Almost there \u2014 hold it right there")
+        : verdict.reason;
+      setGuide(guideShownGood, text);
     });
   }
   function startGuideLoop() {
     stopGuideLoop();
+    guideGoodStreak = 0; guideBadStreak = 0; guideShownGood = false;
     var tick = function () {
       if (!cameraStream) return;
       var video = el("cameraVideo");
@@ -983,13 +1017,18 @@
     el("zoneLayer").hidden = true;
     el("zoneLayer").innerHTML = "";
     var masks = currentScan.masks || {};
-    var urls = Object.keys(masks).filter(function (k) { return !!masks[k]; });
+    // Display-only exclusion: the moisture mask is a diffuse whole-face map
+    // (measured 33% of the photo, 3.6x the next-largest mask) that washes
+    // out the specific concern areas. Its score still shows in the list;
+    // only the photo layer is skipped. (DC, 2026-10-20)
+    var MASK_OVERLAY_SKIP = { moisture: true };
+    var urls = Object.keys(masks).filter(function (k) { return !!masks[k] && !MASK_OVERLAY_SKIP[k]; });
     if (!urls.length) {
       el("reportPhotoNote").textContent = "";
       renderZoneFallback();
       return;
     }
-    el("reportPhotoNote").textContent = "Showing the analysis provider's own region masks on your photo, with zone scores beside it and in the legend below.";
+    el("reportPhotoNote").textContent = "Showing the analysis provider's own region masks on your photo, with zone scores beside it and in the legend below. The broad moisture layer is left off the photo so the specific areas stand out — its score is in the list.";
     var settled = 0, loaded = 0;
     urls.forEach(function (key) {
       var img = document.createElement("img");
