@@ -456,6 +456,11 @@ label.btn { cursor: pointer; }
 /* ---------- Capture stage, shutter button, face guide ---------- */
 .camera-stage { position: relative; border-radius: 12px; overflow: hidden; }
 .camera-stage #cameraVideo, .camera-stage .preview-photo { width: 100%; max-width: none; display: block; }
+/* Mirror the live front-camera preview so movement feels like a mirror
+   (raw stream looks backwards). Display-only: the captured frame and the
+   face-guide analysis use the unflipped stream, so YouCam mask overlays
+   on the results photo still align left/right. */
+.camera-stage #cameraVideo { transform: scaleX(-1); }
 .face-guide {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
