@@ -232,13 +232,15 @@ class ScanResult {
   final Map<String, int> scores;
 }
 
-/// One scan record on a client's series: `{taskId, label, timestamp, result}`.
+/// One scan record on a client's series:
+/// `{taskId, label, timestamp, result, status}` (status since v2.3).
 class SkinScan {
   const SkinScan({
     required this.taskId,
     required this.label,
     required this.timestamp,
     required this.result,
+    this.status = 'accepted',
   });
 
   factory SkinScan.fromJson(Map<String, dynamic> json) {
@@ -250,6 +252,9 @@ class SkinScan {
       result: nested is Map<String, dynamic>
           ? ScanResult.fromJson(nested)
           : ScanResult.fromJson(json),
+      // Records from before the confirmation queue carry no status and
+      // are official history.
+      status: json['status'] as String? ?? 'accepted',
     );
   }
 
@@ -258,8 +263,22 @@ class SkinScan {
   final String timestamp;
   final ScanResult result;
 
+  /// Review status (contract v2.3): `pending` until the practitioner
+  /// accepts the scan into the client's official series.
+  final String status;
+
+  bool get isPending => status == 'pending';
+
   /// [timestamp] parsed for display; unparseable values fall back to epoch.
   DateTime get dateTime => DateTime.tryParse(timestamp) ?? DateTime(1970);
+
+  SkinScan copyWith({String? status}) => SkinScan(
+        taskId: taskId,
+        label: label,
+        timestamp: timestamp,
+        result: result,
+        status: status ?? this.status,
+      );
 }
 
 /// One row of GET /api/me/clients.
@@ -274,6 +293,7 @@ class ClientSummary {
     required this.latestOverall,
     required this.latestScanAt,
     required this.plan,
+    this.pendingCount = 0,
   });
 
   factory ClientSummary.fromJson(Map<String, dynamic> json) => ClientSummary(
@@ -286,6 +306,7 @@ class ClientSummary {
         latestOverall: (json['latestOverall'] as num?)?.toInt(),
         latestScanAt: json['latestScanAt'] as String?,
         plan: ClientPlan.tryParse(json['plan']),
+        pendingCount: (json['pendingCount'] as num?)?.toInt() ?? 0,
       );
 
   final String id;
@@ -293,10 +314,15 @@ class ClientSummary {
   final String createdAt;
   final String token;
   final String link;
+
+  /// Accepted scans only (contract v2.3) — the official series length.
   final int scanCount;
   final int? latestOverall;
   final String? latestScanAt;
   final ClientPlan? plan;
+
+  /// Scans waiting in the confirmation queue for this client.
+  final int pendingCount;
 }
 
 /// Full client record: GET /api/me/clients/:id (plan + scan history).
@@ -330,10 +356,21 @@ class ClientDetail {
   final String token;
   final String link;
   final ClientPlan? plan;
+
+  /// Every stored scan, pending and accepted, oldest first.
   final List<SkinScan> scans;
 
-  SkinScan? get baselineScan => scans.isEmpty ? null : scans.first;
-  SkinScan? get latestScan => scans.isEmpty ? null : scans.last;
+  /// The official series: accepted scans only. All trend math (the
+  /// Brief's gains and focus areas) reads from here.
+  List<SkinScan> get acceptedScans =>
+      scans.where((s) => !s.isPending).toList();
+
+  /// Scans waiting for the practitioner's review (contract v2.3).
+  List<SkinScan> get pendingScans => scans.where((s) => s.isPending).toList();
+
+  SkinScan? get baselineScan =>
+      acceptedScans.isEmpty ? null : acceptedScans.first;
+  SkinScan? get latestScan => acceptedScans.isEmpty ? null : acceptedScans.last;
 }
 
 /// One of the practitioner's own services or retail products

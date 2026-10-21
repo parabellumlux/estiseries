@@ -131,11 +131,15 @@
   var clientAccount = null; // {email, emailVerified} once she creates a login (v2.2)
   var plan = null;
   var timelineScans = []; // normalized scan records, oldest first
-  var currentScan = null;  // normalized latest / just-completed scan
-  var baseline = null;     // normalized first scan
+  var acceptedScans = []; // the official series — accepted scans only (v2.3)
+  var currentScan = null;  // normalized latest accepted / just-completed scan
+  var baseline = null;     // normalized first accepted scan
 
-  // A v2 scan record {label, timestamp, result} normalized to the flat
-  // shape the renderers use.
+  // A v2 scan record {label, timestamp, result, status} normalized to the
+  // flat shape the renderers use. Since v2.3 a fresh scan is "pending"
+  // until the practitioner accepts it; pending scans render in the
+  // timeline with a marker but never feed the trend math (rings, deltas,
+  // baseline/current), which is accepted-only.
   function normalizeScan(record) {
     if (!record) return null;
     var result = record.result || {};
@@ -148,7 +152,8 @@
       skinAge: result.skinAge,
       skinType: result.skinType,
       scores: result.scores || {},
-      masks: result.masks || {}
+      masks: result.masks || {},
+      pending: record.status === "pending"
     };
   }
   function applyClientRecord(body) {
@@ -157,8 +162,9 @@
     clientAccount = (body.client && body.client.account) || null;
     plan = body.plan || null;
     timelineScans = (body.scans || []).map(normalizeScan).filter(function (s) { return s !== null; });
-    baseline = timelineScans.length ? timelineScans[0] : null;
-    currentScan = timelineScans.length ? timelineScans[timelineScans.length - 1] : null;
+    acceptedScans = timelineScans.filter(function (s) { return !s.pending; });
+    baseline = acceptedScans.length ? acceptedScans[0] : null;
+    currentScan = acceptedScans.length ? acceptedScans[acceptedScans.length - 1] : null;
   }
 
   // ---- Step navigation ----
@@ -338,7 +344,7 @@
         arc.appendChild(link);
       }
       var stop = document.createElement("div");
-      stop.className = "arc-stop";
+      stop.className = scan.pending ? "arc-stop arc-stop-pending" : "arc-stop";
       var ring = document.createElement("div");
       ring.className = "score-ring score-ring-sm";
       ring.style.setProperty("--p", scan.overall || 0);
@@ -355,18 +361,28 @@
       stop.appendChild(ring);
       stop.appendChild(label);
       stop.appendChild(date);
+      if (scan.pending) {
+        var pendingNote = document.createElement("p");
+        pendingNote.className = "arc-pending";
+        pendingNote.textContent = "Pending review";
+        stop.appendChild(pendingNote);
+      }
       arc.appendChild(stop);
     });
 
-    var showDeltas = timelineScans.length >= 2 && baseline && currentScan;
+    var showDeltas = acceptedScans.length >= 2 && baseline && currentScan;
     el("heroDeltasTitle").hidden = !showDeltas;
     var chips = el("heroDeltas");
     chips.innerHTML = "";
     if (!showDeltas) return;
+    // Trend chips compare the accepted baseline with the latest ACCEPTED
+    // scan — never a pending one (v2.3).
+    var heroBase = acceptedScans[0];
+    var heroNow = acceptedScans[acceptedScans.length - 1];
     function addChip(key) {
-      if (!baseline.scores || !currentScan.scores) return;
-      if (typeof baseline.scores[key] !== "number" || typeof currentScan.scores[key] !== "number") return;
-      var delta = currentScan.scores[key] - baseline.scores[key];
+      if (!heroBase.scores || !heroNow.scores) return;
+      if (typeof heroBase.scores[key] !== "number" || typeof heroNow.scores[key] !== "number") return;
+      var delta = heroNow.scores[key] - heroBase.scores[key];
       if (delta === 0) return;
       // Avoid duplicate chips when a focus concern also declined.
       for (var i = 0; i < chips.children.length; i++) {
@@ -383,9 +399,9 @@
       plan.focus.forEach(function (f) { addChip(f.concern); });
     }
     CONCERNS.forEach(function (c) {
-      if (baseline.scores && currentScan.scores &&
-          typeof baseline.scores[c.key] === "number" && typeof currentScan.scores[c.key] === "number" &&
-          currentScan.scores[c.key] - baseline.scores[c.key] < 0) addChip(c.key);
+      if (heroBase.scores && heroNow.scores &&
+          typeof heroBase.scores[c.key] === "number" && typeof heroNow.scores[c.key] === "number" &&
+          heroNow.scores[c.key] - heroBase.scores[c.key] < 0) addChip(c.key);
     });
   }
 
@@ -796,10 +812,13 @@
     // Render the report from the returned result right away, then re-fetch
     // the client record so the timeline is built from the stored series
     // (the completed scan is appended to it exactly once by the backend).
+    // The stored record is "pending" until the practitioner accepts it
+    // (v2.3) — she still sees her own report immediately.
     currentScan = normalizeScan({
       label: "Latest scan",
       timestamp: todayIso(),
-      result: result
+      result: result,
+      status: "pending"
     });
     renderReport();
     fetchClientRecord()
@@ -828,7 +847,9 @@
         if (currentScan) {
           currentScan.label = timelineScans.length ? "Scan " + (timelineScans.length + 1) : "Baseline";
           timelineScans = timelineScans.concat([currentScan]);
-          if (!baseline) baseline = timelineScans[0];
+          // The appended scan is pending, so it must not become the
+          // trend baseline in this fallback path.
+          if (!baseline && !currentScan.pending) baseline = timelineScans[0];
         }
         renderTimeline();
         showStep(3);
@@ -1068,6 +1089,9 @@
   function renderReport() {
     if (!currentScan) return;
     renderReportPhoto();
+    // A pending scan's report is hers to see right away; the note says
+    // plainly that it joins the series timeline on acceptance (v2.3).
+    el("reportPendingNote").hidden = !currentScan.pending;
     el("reportScanMeta").textContent = currentScan.label + " · " + formatDate(currentScan.timestamp);
     el("reportOverall").textContent = currentScan.overall;
     el("reportRing").style.setProperty("--p", currentScan.overall || 0);
@@ -1164,7 +1188,7 @@
     list.innerHTML = "";
     timelineScans.forEach(function (scan) {
       var item = document.createElement("li");
-      item.className = "timeline-stop";
+      item.className = scan.pending ? "timeline-stop timeline-stop-pending" : "timeline-stop";
 
       var label = document.createElement("p");
       label.className = "timeline-stop-label";
@@ -1187,17 +1211,27 @@
       item.appendChild(date);
       item.appendChild(score);
       item.appendChild(track);
+      if (scan.pending) {
+        var badge = document.createElement("p");
+        badge.className = "pending-badge";
+        badge.textContent = "Pending practitioner review — this scan joins your series once " +
+          practitionerFirstName() + " accepts it.";
+        item.appendChild(badge);
+      }
       list.appendChild(item);
     });
 
-    // Deltas vs the first scan — only when there are at least two scans.
-    var hasDeltas = timelineScans.length >= 2 && baseline && currentScan;
+    // Deltas vs the first scan — accepted scans only (v2.3): a pending
+    // scan never moves the trend numbers.
+    var trendBase = acceptedScans.length ? acceptedScans[0] : null;
+    var trendNow = acceptedScans.length ? acceptedScans[acceptedScans.length - 1] : null;
+    var hasDeltas = acceptedScans.length >= 2 && trendBase && trendNow;
     el("deltaSection").hidden = !hasDeltas;
-    el("baselineNote").hidden = timelineScans.length !== 1;
+    el("baselineNote").hidden = acceptedScans.length !== 1;
     if (hasDeltas) {
-      el("deltaHint").textContent = currentScan.label +
+      el("deltaHint").textContent = trendNow.label +
         " compared with your baseline scan. A minus means that score is a little lower than at the start — we show it as it is.";
-      el("deltaNowHeader").textContent = currentScan.label;
+      el("deltaNowHeader").textContent = trendNow.label;
 
       var focusKeys = (plan && plan.focus)
         ? plan.focus.map(function (f) { return f.concern; })
@@ -1210,8 +1244,8 @@
       var body = el("deltaTableBody");
       body.innerHTML = "";
       ordered.forEach(function (concern) {
-        var base = baseline.scores[concern.key];
-        var now = currentScan.scores[concern.key];
+        var base = trendBase.scores[concern.key];
+        var now = trendNow.scores[concern.key];
         if (typeof base !== "number" || typeof now !== "number") return;
         var delta = now - base;
 

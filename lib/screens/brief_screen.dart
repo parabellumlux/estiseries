@@ -54,7 +54,9 @@ class BriefScreen extends StatelessWidget {
       );
     }
 
-    if (detail.scans.isEmpty) {
+    final pending = detail.pendingScans;
+
+    if (detail.acceptedScans.isEmpty) {
       return ScreenScaffold(
         title: 'Pre-visit brief',
         child: SingleChildScrollView(
@@ -73,10 +75,14 @@ class BriefScreen extends StatelessWidget {
                       Text('No scans yet', style: theme.textTheme.titleMedium),
                       const SizedBox(height: 8),
                       Text(
-                        '${detail.firstName} has not scanned yet. Share her '
-                        'personal scan link so she can scan from home before '
-                        'her visit — her brief will build itself from that '
-                        'first scan.',
+                        pending.isEmpty
+                            ? '${detail.firstName} has not scanned yet. Share her '
+                                'personal scan link so she can scan from home before '
+                                'her visit — her brief will build itself from that '
+                                'first scan.'
+                            : '${detail.firstName} has scanned — her scan is '
+                                'waiting for your review below. Accept it and '
+                                'her brief builds itself from it.',
                         style: theme.textTheme.bodyMedium,
                       ),
                       const SizedBox(height: 12),
@@ -88,6 +94,10 @@ class BriefScreen extends StatelessWidget {
                   ),
                 ),
               ),
+              if (pending.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                _PendingScansCard(state: state, pending: pending),
+              ],
               const SizedBox(height: 16),
               Text(
                 kDisclaimer,
@@ -127,7 +137,7 @@ class BriefScreen extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '${detail.scans.length} scan${detail.scans.length == 1 ? '' : 's'} · '
+              '${detail.acceptedScans.length} scan${detail.acceptedScans.length == 1 ? '' : 's'} · '
               'last scan ${_formatDate(latest.dateTime)}',
               style: theme.textTheme.bodySmall,
             ),
@@ -137,6 +147,10 @@ class BriefScreen extends StatelessWidget {
               icon: const Icon(Icons.refresh, size: 18),
               label: const Text('Refresh scans'),
             ),
+            if (pending.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _PendingScansCard(state: state, pending: pending),
+            ],
             const SizedBox(height: 16),
             Row(
               children: [
@@ -257,6 +271,109 @@ class BriefScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Scans waiting in the confirmation queue (contract v2.3). A pending
+/// scan joins the client's official series only when the practitioner
+/// accepts it here — Accept is one tap; Discard confirms first because
+/// it deletes the record entirely.
+class _PendingScansCard extends StatelessWidget {
+  const _PendingScansCard({required this.state, required this.pending});
+
+  final AppState state;
+  final List<SkinScan> pending;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Waiting for your review (${pending.length})',
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'These scans are not in her series yet. Accept the ones '
+              'that are really hers; discard anything that is not.',
+              style: theme.textTheme.bodySmall,
+            ),
+            if (state.reviewMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(state.reviewMessage!, style: theme.textTheme.bodySmall),
+            ],
+            for (final scan in pending) ...[
+              const Divider(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(scan.label, style: theme.textTheme.titleSmall),
+                        Text(
+                          _formatDate(scan.dateTime),
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    '${scan.result.overall}',
+                    style: theme.textTheme.headlineSmall,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  FilledButton(
+                    onPressed: () => state.acceptPendingScan(scan.taskId),
+                    child: const Text('Accept'),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton(
+                    onPressed: () => _confirmDiscard(context, scan),
+                    child: const Text('Discard'),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDiscard(BuildContext context, SkinScan scan) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Discard this scan?'),
+        content: Text(
+          'Discard ${scan.label} from ${_formatDate(scan.dateTime)}? '
+          'The scan is deleted entirely — this cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep it'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Discard scan'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await state.discardPendingScan(scan.taskId);
+    }
   }
 }
 

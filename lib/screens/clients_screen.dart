@@ -115,6 +115,13 @@ class _ClientListViewState extends State<_ClientListView> {
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (client.pendingCount > 0)
+                      Chip(
+                        avatar: const Icon(Icons.hourglass_top, size: 14),
+                        label: Text('${client.pendingCount} pending'),
+                        visualDensity: VisualDensity.compact,
+                        side: BorderSide.none,
+                      ),
                     if (client.latestOverall != null)
                       Chip(
                         label: Text('${client.latestOverall}'),
@@ -195,8 +202,8 @@ class _ClientDetailView extends StatelessWidget {
                     const SizedBox(height: 8),
                     Text(
                       'Text or email this link — she scans from home before '
-                      'her visit. No app to install. Her scans land on her '
-                      'series timeline here.',
+                      'her visit. No app to install. Her scans arrive here '
+                      'for your review, then join her series timeline.',
                       style: theme.textTheme.bodySmall,
                     ),
                   ],
@@ -256,7 +263,12 @@ class _ClientDetailView extends StatelessWidget {
               Card(
                 child: ListTile(
                   title: Text(scan.label),
-                  subtitle: Text(_formatDate(scan.dateTime)),
+                  subtitle: Text(
+                    scan.isPending
+                        ? '${_formatDate(scan.dateTime)} · Pending review — '
+                            'accept it in her Brief'
+                        : _formatDate(scan.dateTime),
+                  ),
                   trailing: Text(
                     '${scan.result.overall}',
                     style: theme.textTheme.titleLarge,

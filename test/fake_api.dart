@@ -34,6 +34,8 @@ class FakeApi implements EstiSeriesApi {
   String? lastAccountEmail;
   String? lastForgotEmail;
   String? lastResendEmail;
+  String? lastAcceptedTaskId;
+  String? lastDiscardedTaskId;
 
   @override
   String? token;
@@ -164,6 +166,72 @@ class FakeApi implements EstiSeriesApi {
   }
 
   @override
+  Future<SkinScan> acceptScan(String clientId, String taskId) async {
+    lastAcceptedTaskId = taskId;
+    final detail = _details[clientId];
+    if (detail == null) {
+      throw const ApiException(404, 'error_client_not_found');
+    }
+    final index = detail.scans.indexWhere((s) => s.taskId == taskId);
+    if (index == -1) {
+      throw const ApiException(404, 'error_scan_not_found');
+    }
+    final updated = detail.scans[index].copyWith(status: 'accepted');
+    final scans = [...detail.scans];
+    scans[index] = updated;
+    _storeScans(detail, scans);
+    return updated;
+  }
+
+  @override
+  Future<void> discardScan(String clientId, String taskId) async {
+    lastDiscardedTaskId = taskId;
+    final detail = _details[clientId];
+    if (detail == null) {
+      throw const ApiException(404, 'error_client_not_found');
+    }
+    _storeScans(
+      detail,
+      detail.scans.where((s) => s.taskId != taskId).toList(),
+    );
+  }
+
+  /// Replaces a stored detail's scans and re-derives its list summary
+  /// (accepted-only counts, like the real backend).
+  void _storeScans(ClientDetail detail, List<SkinScan> scans) {
+    final updated = ClientDetail(
+      id: detail.id,
+      firstName: detail.firstName,
+      createdAt: detail.createdAt,
+      token: detail.token,
+      link: detail.link,
+      plan: detail.plan,
+      scans: scans,
+    );
+    _details[detail.id] = updated;
+    final accepted = updated.acceptedScans;
+    _clients = [
+      for (final c in _clients)
+        if (c.id == detail.id)
+          ClientSummary(
+            id: c.id,
+            firstName: c.firstName,
+            createdAt: c.createdAt,
+            token: c.token,
+            link: c.link,
+            scanCount: accepted.length,
+            latestOverall:
+                accepted.isEmpty ? null : accepted.last.result.overall,
+            latestScanAt: accepted.isEmpty ? null : accepted.last.timestamp,
+            plan: c.plan,
+            pendingCount: updated.pendingScans.length,
+          )
+        else
+          c,
+    ];
+  }
+
+  @override
   Future<void> updatePlan(String clientId, Map<String, dynamic> plan) async {
     lastSavedPlanClientId = clientId;
     lastSavedPlan = plan;
@@ -222,17 +290,20 @@ class FakeApi implements EstiSeriesApi {
   Future<PractitionerProfile> deleteLogo() async => _profile;
 }
 
-/// A scan record in contract-v2 shape, for tests.
+/// A scan record in contract-v2 shape, for tests. [status] defaults to
+/// `accepted`; pass `pending` for a scan in the confirmation queue.
 SkinScan fakeScan(
   String label,
   String timestamp,
   int overall,
-  Map<String, int> scores,
-) =>
+  Map<String, int> scores, {
+  String status = 'accepted',
+}) =>
     SkinScan.fromJson(<String, dynamic>{
       'taskId': 'task-$label',
       'label': label,
       'timestamp': timestamp,
+      'status': status,
       'result': <String, dynamic>{
         'overall': overall,
         'skinAge': 44,

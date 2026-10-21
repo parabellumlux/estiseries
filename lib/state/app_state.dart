@@ -520,6 +520,49 @@ class AppState extends ChangeNotifier {
 
   Future<void> refreshSelectedClient() async => _loadSelectedDetail();
 
+  // ---- Scan review queue (contract v2.3) ------------------------------------
+
+  String? reviewMessage;
+
+  /// Accepts one pending scan of the selected client into her official
+  /// series (one tap from the Brief's pending section), then reloads the
+  /// client so brief math, counts and the list badge all recompute.
+  Future<bool> acceptPendingScan(String taskId) async {
+    final id = selectedClientId;
+    if (id == null) return false;
+    try {
+      await api.acceptScan(id, taskId);
+      reviewMessage = null;
+      await _fetchClients();
+      await _loadSelectedDetail();
+      return true;
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) await _expireSession();
+      reviewMessage = e.message ?? 'Could not accept that scan.';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Discards one pending scan of the selected client — its record is
+  /// deleted entirely — then reloads like [acceptPendingScan].
+  Future<bool> discardPendingScan(String taskId) async {
+    final id = selectedClientId;
+    if (id == null) return false;
+    try {
+      await api.discardScan(id, taskId);
+      reviewMessage = null;
+      await _fetchClients();
+      await _loadSelectedDetail();
+      return true;
+    } on ApiException catch (e) {
+      if (e.isUnauthorized) await _expireSession();
+      reviewMessage = e.message ?? 'Could not discard that scan.';
+      notifyListeners();
+      return false;
+    }
+  }
+
   Future<void> _loadSelectedDetail() async {
     final id = selectedClientId;
     if (id == null) return;

@@ -99,6 +99,15 @@ abstract class EstiSeriesApi {
 
   Future<ClientDetail> getClient(String clientId);
 
+  /// POST /api/me/clients/:id/scans/:taskId/accept (contract v2.3) —
+  /// moves a pending scan into the client's official series and returns
+  /// the updated record.
+  Future<SkinScan> acceptScan(String clientId, String taskId);
+
+  /// DELETE /api/me/clients/:id/scans/:taskId (contract v2.3) — discards
+  /// a pending scan, removing its record entirely.
+  Future<void> discardScan(String clientId, String taskId);
+
   Future<void> updatePlan(String clientId, Map<String, dynamic> plan);
 
   Future<void> deleteClient(String clientId);
@@ -248,6 +257,19 @@ class HttpApiClient implements EstiSeriesApi {
   Future<ClientDetail> getClient(String clientId) async =>
       ClientDetail.fromJson(
           _asMap(await _request('GET', '/api/me/clients/$clientId')));
+
+  @override
+  Future<SkinScan> acceptScan(String clientId, String taskId) async =>
+      SkinScan.fromJson(_asMap(await _request(
+        'POST',
+        '/api/me/clients/$clientId/scans/$taskId/accept',
+        body: const {},
+      )));
+
+  @override
+  Future<void> discardScan(String clientId, String taskId) async {
+    await _request('DELETE', '/api/me/clients/$clientId/scans/$taskId');
+  }
 
   @override
   Future<void> updatePlan(String clientId, Map<String, dynamic> plan) async {

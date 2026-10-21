@@ -271,3 +271,65 @@ gains `client.account`: `{email, emailVerified}` or null.
   on the personal welcome; a sign-in view lives at `/?signin=1` and, on
   success, stores the client token in localStorage and renders the
   series with no `?c=` in the URL.
+
+## v2.3 additions (2026-10-21) — practitioner scan-confirmation queue
+
+A completed scan no longer writes straight into a client's official
+series. Because the client link token is the only credential on the
+client endpoints, anyone holding a forwarded link could otherwise scan
+into the record. Now every completed scan — from the client link flow
+or practitioner-initiated — lands as **pending** and joins the official
+record only when the practitioner accepts it.
+
+### Scan record
+
+Scan records gain `status`: `"pending"` or `"accepted"`.
+
+- A scan appended by the live pipeline is stored with
+  `status: "pending"`. The scanning client still sees her own report
+  immediately (`GET /api/clients/:token/scans/:taskId` is unchanged).
+- **Migration:** records stored before v2.3 carry no `status`; the
+  store migration stamps them `"accepted"`, and anywhere a status is
+  read, a missing status means accepted. Everything already in a
+  series — including the seeded demo scans — stays official.
+- The `simulateError` coaching rehearsal still stores nothing, so it
+  creates no pending entry.
+
+### What counts as "the series"
+
+Trend-facing reads are computed from **accepted scans only**:
+
+- `clientSummary` (`GET /api/me/clients`, create-client and plan-save
+  responses): `scanCount`, `latestOverall` and `latestScanAt` describe
+  the accepted series. Summaries gain `pendingCount` (int ≥ 0).
+- The practitioner Brief's gains/focus math and the client page's
+  trend rings and delta tables likewise use accepted scans only.
+- `clientFull` scans and the public client view's scans include every
+  scan, each with its `status`. In the client view, a pending scan
+  appears in her timeline marked "Pending practitioner review" and
+  does not move her trend numbers; on acceptance it becomes a normal
+  entry.
+
+### Review endpoints (Bearer, own clients only)
+
+Foreign client ids 404 `error_client_not_found`, exactly like the
+other client-scoped routes.
+
+- `GET /api/me/clients/:clientId/pending` → `[scan records]` — the
+  client's pending scans, oldest first, in the full scan-record shape
+  (`{taskId, label, timestamp, result, status}`).
+- `POST /api/me/clients/:clientId/scans/:taskId/accept` → 200 the scan
+  record, now `status: "accepted"`; it joins the official series and
+  trend math recomputes from it. Accepting an already-accepted scan is
+  an idempotent 200. Unknown task → 404 `error_scan_not_found`.
+- `DELETE /api/me/clients/:clientId/scans/:taskId` → `{ok:true}` —
+  discards a pending scan: the record (scores, mask references, photo
+  metadata) is deleted entirely and leaves no trace in the client's
+  record. Discarding an accepted scan → 400 `error_scan_not_pending`;
+  unknown task → 404 `error_scan_not_found`.
+
+The try-it flow is unchanged: its throwaway clients' scans are pending
+under the sample practice like any other, and the sample practitioner
+reviews them the same way. Client login stays voluntary — viewing a
+series never requires an account, and the queue adds no client-side
+gate.

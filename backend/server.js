@@ -387,29 +387,55 @@ function publicPractitioner(p) {
   };
 }
 
+// Scan review status (v2.3): every completed scan lands as "pending" and
+// joins the client's official series only when the practitioner accepts
+// it. Records written before v2.3 carry no status field — the migration
+// below stamps them "accepted", and scanStatus treats a missing status
+// as accepted so nothing already in a series ever drops out of the math.
+function scanStatus(s) {
+  return s.status === 'pending' ? 'pending' : 'accepted';
+}
+
+function acceptedScans(c) {
+  return c.scans.filter((s) => scanStatus(s) === 'accepted');
+}
+
+function pendingScans(c) {
+  return c.scans.filter((s) => scanStatus(s) === 'pending');
+}
+
+function scanRecordView(s) {
+  return {
+    taskId: s.taskId,
+    label: s.label,
+    timestamp: s.timestamp,
+    result: s.result,
+    status: scanStatus(s),
+  };
+}
+
 function clientSummary(c) {
-  const latest = c.scans.length ? c.scans[c.scans.length - 1] : null;
+  // Trend-facing fields (scanCount, latest*) describe the ACCEPTED series
+  // only; pending scans surface separately as pendingCount.
+  const accepted = acceptedScans(c);
+  const latest = accepted.length ? accepted[accepted.length - 1] : null;
   return {
     id: c.id,
     firstName: c.firstName,
     createdAt: c.createdAt,
     token: c.token,
     link: '/?c=' + c.token,
-    scanCount: c.scans.length,
+    scanCount: accepted.length,
     latestOverall: latest ? latest.result.overall : null,
     latestScanAt: latest ? latest.timestamp : null,
+    pendingCount: c.scans.length - accepted.length,
     plan: c.plan || null,
   };
 }
 
 function clientFull(c) {
   return Object.assign(clientSummary(c), {
-    scans: c.scans.map((s) => ({
-      taskId: s.taskId,
-      label: s.label,
-      timestamp: s.timestamp,
-      result: s.result,
-    })),
+    scans: c.scans.map(scanRecordView),
   });
 }
 
@@ -569,6 +595,17 @@ function migrateStore() {
       if (!('account' in c)) {
         c.account = null;
         changed = true;
+      }
+      // Scan review (v2.3): scans stored before the confirmation queue
+      // existed are already part of the official series — stamp them
+      // "accepted" so the queue only ever holds genuinely new scans.
+      if (Array.isArray(c.scans)) {
+        for (const s of c.scans) {
+          if (!('status' in s)) {
+            s.status = 'accepted';
+            changed = true;
+          }
+        }
       }
     }
   }
@@ -795,7 +832,10 @@ function mapProviderResult(data) {
 }
 
 // Persists a completed result into the owning client's series — exactly once
-// per task. Called by the pipeline on completion.
+// per task. Called by the pipeline on completion. Since v2.3 the record
+// lands as "pending": it is stored (and the scanning client sees her own
+// report right away), but it stays out of the official timeline math
+// until the practitioner accepts it (see the review endpoints below).
 function appendScanToClient(taskId, result) {
   const task = liveTasks.get(taskId);
   if (!task || task.appended || !task.clientToken) return;
@@ -808,6 +848,7 @@ function appendScanToClient(taskId, result) {
     label,
     timestamp: new Date().toISOString(),
     result,
+    status: 'pending',
   });
   task.appended = true;
   saveStore();
@@ -1351,6 +1392,62 @@ function ownClientOr404(practitioner, clientId, res) {
   return client;
 }
 
+// --- Scan review queue (v2.3) ---------------------------------------------
+// A completed scan never writes straight into a client's official series
+// any more: it waits here until the practitioner accepts it (one tap) or
+// discards it (record removed entirely). Only the owning practitioner can
+// see or act on the queue — other practitioners' clients 404 upstream in
+// ownClientOr404, exactly like every other client-scoped route.
+
+function handleListPendingScans(practitioner, clientId, res) {
+  const client = ownClientOr404(practitioner, clientId, res);
+  if (!client) return;
+  sendJson(res, 200, pendingScans(client).map(scanRecordView));
+}
+
+function findScanOr404(client, taskId, res) {
+  const scan = client.scans.find((s) => s.taskId === taskId);
+  if (!scan) {
+    notFound(res, 'error_scan_not_found', 'No such scan for this client.');
+    return null;
+  }
+  return scan;
+}
+
+function handleAcceptScan(practitioner, clientId, taskId, res) {
+  const client = ownClientOr404(practitioner, clientId, res);
+  if (!client) return;
+  const scan = findScanOr404(client, taskId, res);
+  if (!scan) return;
+  // Accepting is idempotent: re-accepting an official scan is a no-op 200,
+  // so a double tap in the app never errors.
+  if (scanStatus(scan) === 'pending') {
+    scan.status = 'accepted';
+    saveStore();
+  }
+  sendJson(res, 200, scanRecordView(scan));
+}
+
+function handleDiscardScan(practitioner, clientId, taskId, res) {
+  const client = ownClientOr404(practitioner, clientId, res);
+  if (!client) return;
+  const scan = findScanOr404(client, taskId, res);
+  if (!scan) return;
+  if (scanStatus(scan) !== 'pending') {
+    sendJson(res, 400, {
+      status: 'error',
+      errorCode: 'error_scan_not_pending',
+      message: 'Only a pending scan can be discarded.',
+    });
+    return;
+  }
+  // Deleting the record removes its scores, mask references and photo
+  // metadata with it — nothing of the scan stays in the client's record.
+  client.scans = client.scans.filter((s) => s.taskId !== taskId);
+  saveStore();
+  sendJson(res, 200, { ok: true });
+}
+
 // --- Offerings (v2.1): the practitioner's own services & products --------
 
 // Validates an offering body; returns the editable fields, or null when
@@ -1544,6 +1641,7 @@ function handleGetPublicClient(token, res) {
       label: s.label,
       timestamp: s.timestamp,
       result: s.result,
+      status: scanStatus(s),
     })),
   });
 }
@@ -1765,6 +1863,35 @@ const server = http.createServer(async (req, res) => {
         client.plan = body.plan;
         saveStore();
         sendJson(res, 200, clientSummary(client));
+        return;
+      }
+
+      // Scan review queue (v2.3): list / accept / discard pending scans.
+      const pendingMatch = pathname.match(/^\/api\/me\/clients\/([^/]+)\/pending$/);
+      if (pendingMatch && req.method === 'GET') {
+        handleListPendingScans(practitioner, decodeURIComponent(pendingMatch[1]), res);
+        return;
+      }
+      const acceptMatch = pathname.match(
+        /^\/api\/me\/clients\/([^/]+)\/scans\/([^/]+)\/accept$/
+      );
+      if (acceptMatch && req.method === 'POST') {
+        handleAcceptScan(
+          practitioner,
+          decodeURIComponent(acceptMatch[1]),
+          decodeURIComponent(acceptMatch[2]),
+          res
+        );
+        return;
+      }
+      const discardMatch = pathname.match(/^\/api\/me\/clients\/([^/]+)\/scans\/([^/]+)$/);
+      if (discardMatch && req.method === 'DELETE') {
+        handleDiscardScan(
+          practitioner,
+          decodeURIComponent(discardMatch[1]),
+          decodeURIComponent(discardMatch[2]),
+          res
+        );
         return;
       }
 
