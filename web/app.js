@@ -490,13 +490,13 @@
   }
 
   // ---- Face guide (Addendum 2) ----
-  // An oval over the preview: red while placement is wrong, green when the
+  // An oval over the preview: white while placement is wrong, green when the
   // face is centered, the right size, and the light is adequate. Checks are
   // lightweight and client-side only, zero dependencies:
   //   - the native FaceDetector API where available (face bounding box), with
   //   - a canvas fallback: frame luminance + skin-tone pixel centroid / box.
-  // The guide is advice, never a gate: the shutter stays usable while red,
-  // and a red-guide capture still flows into the backend coaching loop.
+  // The guide is advice, never a gate: the shutter stays usable while white,
+  // and a not-yet-green capture still flows into the backend coaching loop.
   var guideTimer = null;
   var guideBusy = false;
   var guideDetector = null;
